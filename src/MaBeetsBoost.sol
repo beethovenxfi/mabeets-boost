@@ -187,16 +187,15 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         reliquary.merge(buyerRelicId, sellerRelicId);
 
         // This transfers the new relic directly to the buyer
-        // We leave the protocol fee amount in the buyer's relic and process it below
-        uint256 newBuyerRelicId = reliquary.split(sellerRelicId, buyerPosition.amount - sellerFeeAmount, msg.sender);
+        // We leave the protocol fee amount in the seller's relic and process it below
+        uint256 newBuyerRelicId = reliquary.split(sellerRelicId, buyerPosition.amount - totalFeeAmount, msg.sender);
 
         // The relic should maintain max maturity after the split
         require(_isRelicMaxMaturity(sellerRelicId), RelicNotFullyMatured());
 
         if (protocolFeeAmount > 0) {
-            console.log("protocolFeeAmount", protocolFeeAmount);
             // Reliquary's withdraw function will send the tokens to msg.sender (this contract)
-            reliquary.withdraw(protocolFeeAmount, newBuyerRelicId);
+            reliquary.withdraw(protocolFeeAmount, sellerRelicId);
             IERC20(reliquary.poolToken(offer.poolId)).safeTransfer(protocolFeeRecipient, protocolFeeAmount);
         }
 
