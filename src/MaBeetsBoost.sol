@@ -3,7 +3,7 @@ pragma solidity ^0.8.27;
 
 import "@reliquary/contracts/interfaces/IReliquary.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -92,7 +92,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
     error BuyerRelicFullyMatured();
 
     constructor(address _reliquary, address _owner, uint256 _protocolFeeBips, address _protocolFeeRecipient)
-        Ownable(_owner)
+        Ownable()
     {
         reliquary = IReliquary(_reliquary);
 
