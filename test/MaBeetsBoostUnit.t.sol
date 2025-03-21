@@ -3,26 +3,16 @@ pragma solidity ^0.8.27;
 
 import {Test, console} from "forge-std/Test.sol";
 import {MaBeetsBoost} from "../src/MaBeetsBoost.sol";
-import {Reliquary} from "@reliquary/contracts/Reliquary.sol";
-import {IReliquary, PositionInfo, PoolInfo, LevelInfo} from "@reliquary/contracts/interfaces/IReliquary.sol";
-import {IEmissionCurve} from "@reliquary/contracts/interfaces/IEmissionCurve.sol";
+import {IReliquary, PositionInfo, PoolInfo, LevelInfo} from "../src/interfaces/IReliquary.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {console} from "forge-std/console.sol";
-
-// We need a simple mock for the EmissionCurve
-contract MockEmissionCurve is IEmissionCurve {
-    function getRate(uint256) external pure override returns (uint256) {
-        return 1e18; // Constant emission rate for testing
-    }
-}
 
 contract MaBeetsBoostUnitTest is Test {
     MaBeetsBoost private maBeetsBoost;
     IReliquary private reliquary;
     IERC20 private lpToken;
     MockERC20 private rewardToken;
-    MockEmissionCurve private emissionCurve;
 
     // Test accounts
     address private owner = address(0x1);
@@ -36,8 +26,10 @@ contract MaBeetsBoostUnitTest is Test {
 
     // Sonic blockchain specific constants
     string private SONIC_RPC_URL = vm.envString("SONIC_RPC_URL");
-    address private RELIQUARY_ADDRESS = 0x1234567890123456789012345678901234567890; // Replace with actual address
+    address private RELIQUARY_ADDRESS = 0x973670ce19594F857A7cD85EE834c7a74a941684; // Replace with actual address
     uint256 private POOL_ID = 0; // Replace with a real pool ID that exists on Sonic's Reliquary
+
+    address private BEETS_TREASURY = 0xc5E0250037195850E4D987CA25d6ABa68ef5fEe8;
 
     // Store fork ID
     uint256 private forkId;
@@ -45,11 +37,9 @@ contract MaBeetsBoostUnitTest is Test {
     // Setup for tests
     function setUp() public {
         // Create a fork of Sonic blockchain
-        forkId = vm.createSelectFork(SONIC_RPC_UR, 15032705);
-
+        forkId = vm.createSelectFork(SONIC_RPC_URL, 15032705);
         // Get the already deployed Reliquary
         reliquary = IReliquary(RELIQUARY_ADDRESS);
-
         // Fetch the LP token for the test pool
         lpToken = IERC20(reliquary.poolToken(POOL_ID));
 
@@ -61,25 +51,16 @@ contract MaBeetsBoostUnitTest is Test {
         // Check that the fork is working by querying the Reliquary
         console.log("Reliquary address:", address(reliquary));
         console.log("LP Token address:", address(lpToken));
-
         // Setup seller with a fully matured relic
         _setupSellerWithMaturedRelic();
-
         // Setup buyer with non-matured relic
         _setupBuyerWithNonMaturedRelic();
     }
 
     function _setupSellerWithMaturedRelic() private {
-        // We need to get or create a fully matured relic for the seller
-
-        // First, get some LP tokens for the seller
-        // This could be done by finding an existing holder and using hoax to impersonate them
-        address existingLpHolder = _findLpTokenHolder();
         uint256 amountToTransfer = 1000 ether;
 
-        vm.startPrank(existingLpHolder);
-        lpToken.transfer(seller, amountToTransfer);
-        vm.stopPrank();
+        _distributeLpTokens(seller, amountToTransfer);
 
         // Now use the seller account to create and mature a relic
         vm.startPrank(seller);
@@ -112,14 +93,8 @@ contract MaBeetsBoostUnitTest is Test {
 
     function _setupBuyerWithNonMaturedRelic() private {
         // Similar approach for buyer, but we'll make it partially matured
-
-        // Get LP tokens for buyer
-        address existingLpHolder = _findLpTokenHolder();
         uint256 amountToTransfer = 1000 ether;
-
-        vm.startPrank(existingLpHolder);
-        lpToken.transfer(buyer, amountToTransfer);
-        vm.stopPrank();
+        _distributeLpTokens(buyer, amountToTransfer);
 
         vm.startPrank(buyer);
 
@@ -145,6 +120,12 @@ contract MaBeetsBoostUnitTest is Test {
         // Approve LP token transfers for paying fees
         lpToken.approve(address(maBeetsBoost), type(uint256).max);
 
+        vm.stopPrank();
+    }
+
+    function _distributeLpTokens(address to, uint256 amount) internal {
+        vm.startPrank(BEETS_TREASURY);
+        lpToken.transfer(to, amount);
         vm.stopPrank();
     }
 
@@ -200,7 +181,9 @@ contract MaBeetsBoostUnitTest is Test {
 
         // Accept the offer
         vm.prank(buyer);
+        console.log("before acceptOffer");
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        console.log("after acceptOffer");
 
         // Verify LP tokens were transferred correctly
         uint256 finalBuyerLpBalance = lpToken.balanceOf(buyer);
