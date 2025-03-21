@@ -1,0 +1,3 @@
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@reliquary/contracts/=lib/Reliquary/contracts/
+openzeppelin-contracts/contracts/access/=lib/openzeppelin-contracts/contracts/access/extensions/
