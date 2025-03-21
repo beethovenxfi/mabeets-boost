@@ -36,6 +36,23 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         uint256 relicSize;
     }
 
+    struct AcceptedOfferRecord {
+        uint256 id;
+        address buyer;
+        uint256 buyerRelicId;
+        uint256 newBuyerRelicId;
+        address seller;
+        uint256 sellerRelicId;
+        uint256 poolId;
+        uint256 feePerLevelBips;
+        uint256 amount;
+        uint256 amountAfterFee;
+        uint256 sellerFeeAmount;
+        uint256 protocolFeeAmount;
+        uint256 numLevelsBoosted;
+        uint256 timestamp;
+    }
+
     uint256 public constant MIN_FEE_PER_LEVEL_BIPS = 10; // 0.1%
     uint256 public constant MAX_FEE_PER_LEVEL_BIPS = 100; // 1%
     uint256 public constant MAX_PROTOCOL_FEE_BIPS = 5_000; // 50%
@@ -55,6 +72,13 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
 
     // Mapping from offerId => relicId
     mapping(uint256 offerId => uint256 relicId) public offerRelicIds;
+
+    mapping(uint256 index => AcceptedOfferRecord) private _acceptedOfferRecords;
+    uint256 public nextAcceptedOfferRecordId = 0;
+
+    mapping(address user => mapping(uint256 index => uint256 acceptedOfferRecordIdx)) private
+        _userAcceptedOfferRecordIndexes;
+    mapping(address user => uint256 count) private _userAcceptedOfferRecordCount;
 
     // Events
     event OfferCreated(
@@ -198,6 +222,17 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
             IERC20(reliquary.poolToken(offer.poolId)).safeTransfer(protocolFeeRecipient, protocolFeeAmount);
         }
 
+        _saveAcceptedOfferRecord(
+            offer,
+            sellerPosition,
+            buyerPosition,
+            buyerRelicId,
+            newBuyerRelicId,
+            sellerFeeAmount,
+            protocolFeeAmount,
+            sellerPosition.level - buyerPosition.level
+        );
+
         // The offer stays active until the seller cancels it, it will continue to accrue excess maturity
 
         emit OfferAccepted(
@@ -242,22 +277,9 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
     /**
      * @notice Get the offer for a specific relic ID
      * @param relicId The relic ID to look up
-     * @return offer The corresponding offer, or null if no active offer exists
+     * @return offer The corresponding offer with metadata
      */
-    function getOffer(uint256 relicId) external view returns (Offer memory) {
-        return _offers[relicId];
-    }
-
-    /**
-     * @notice Get the offer for a specific offer ID
-     * @param offerId The offer ID to look up
-     * @return offer The corresponding offer, or null if no active offer exists
-     */
-    function getOfferById(uint256 offerId) external view returns (Offer memory) {
-        return _offers[offerRelicIds[offerId]];
-    }
-
-    function getOfferWithMetadata(uint256 relicId) public view returns (OfferWithMetadata memory) {
+    function getOffer(uint256 relicId) public view returns (OfferWithMetadata memory) {
         PositionInfo memory position = reliquary.getPositionForId(relicId);
         LevelInfo memory levelInfo = reliquary.getLevelInfo(position.poolId);
         uint256 maturity = block.timestamp - position.entry;
@@ -275,6 +297,15 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
             excessMaturity: excessMaturity,
             relicSize: position.amount
         });
+    }
+
+    /**
+     * @notice Get the offer for a specific offer ID
+     * @param offerId The offer ID to look up
+     * @return offer The corresponding offer with metadata
+     */
+    function getOfferById(uint256 offerId) external view returns (OfferWithMetadata memory) {
+        return getOffer(offerRelicIds[offerId]);
     }
 
     /**
@@ -299,11 +330,60 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         for (uint256 i = 0; i < size; i++) {
             if (!reverseOrder) {
                 // In chronological order we simply skip the first (older) entries
-                items[i] = getOfferWithMetadata(offerRelicIds[skip + i]);
+                items[i] = getOffer(offerRelicIds[skip + i]);
             } else {
                 // In reverse order we go back to front, skipping the last (newer) entries. Note that `remaining` will
                 // equal the total count if `skip` is 0, meaning we'd start with the newest entry.
-                items[i] = getOfferWithMetadata(offerRelicIds[remaining - 1 - i]);
+                items[i] = getOffer(offerRelicIds[remaining - 1 - i]);
+            }
+        }
+
+        return items;
+    }
+
+    function getAcceptedOfferRecords(uint256 skip, uint256 maxSize, bool reverseOrder)
+        public
+        view
+        returns (AcceptedOfferRecord[] memory)
+    {
+        require(skip < nextAcceptedOfferRecordId, SkipTooLarge());
+        require(maxSize > 0, MaxSizeCannotBeZero());
+
+        uint256 remaining = nextAcceptedOfferRecordId - skip;
+        uint256 size = remaining < maxSize ? remaining : maxSize;
+        AcceptedOfferRecord[] memory items = new AcceptedOfferRecord[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            if (!reverseOrder) {
+                // In chronological order we simply skip the first (older) entries
+                items[i] = _acceptedOfferRecords[skip + i];
+            } else {
+                // In reverse order we go back to front, skipping the last (newer) entries. Note that `remaining` will
+                // equal the total count if `skip` is 0, meaning we'd start with the newest entry.
+                items[i] = _acceptedOfferRecords[remaining - 1 - i];
+            }
+        }
+
+        return items;
+    }
+
+    function getUserAcceptedOfferRecords(address user, uint256 skip, uint256 maxSize, bool reverseOrder)
+        public
+        view
+        returns (AcceptedOfferRecord[] memory)
+    {
+        require(skip < _userAcceptedOfferRecordCount[user], SkipTooLarge());
+        require(maxSize > 0, MaxSizeCannotBeZero());
+
+        uint256 remaining = _userAcceptedOfferRecordCount[user] - skip;
+        uint256 size = remaining < maxSize ? remaining : maxSize;
+        AcceptedOfferRecord[] memory items = new AcceptedOfferRecord[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            if (!reverseOrder) {
+                items[i] = _acceptedOfferRecords[_userAcceptedOfferRecordIndexes[user][skip + i]];
+            } else {
+                items[i] = _acceptedOfferRecords[_userAcceptedOfferRecordIndexes[user][remaining - 1 - i]];
             }
         }
 
@@ -363,5 +443,46 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         }
 
         return false;
+    }
+
+    function _saveAcceptedOfferRecord(
+        Offer memory offer,
+        PositionInfo memory sellerPosition,
+        PositionInfo memory buyerPosition,
+        uint256 buyerRelicId,
+        uint256 newBuyerRelicId,
+        uint256 sellerFeeAmount,
+        uint256 protocolFeeAmount,
+        uint256 numLevelsBoosted
+    ) internal {
+        AcceptedOfferRecord memory record = AcceptedOfferRecord({
+            id: nextAcceptedOfferRecordId,
+            buyer: msg.sender,
+            buyerRelicId: buyerRelicId,
+            newBuyerRelicId: newBuyerRelicId,
+            seller: offer.seller,
+            sellerRelicId: offer.relicId,
+            poolId: offer.poolId,
+            feePerLevelBips: offer.feePerLevelBips,
+            amount: buyerPosition.amount,
+            amountAfterFee: buyerPosition.amount - sellerFeeAmount - protocolFeeAmount,
+            sellerFeeAmount: sellerFeeAmount,
+            protocolFeeAmount: protocolFeeAmount,
+            numLevelsBoosted: numLevelsBoosted,
+            timestamp: block.timestamp
+        });
+
+        _acceptedOfferRecords[nextAcceptedOfferRecordId] = record;
+
+        //store the record for both the buyer and the seller
+        _userAcceptedOfferRecordIndexes[msg.sender][_userAcceptedOfferRecordCount[msg.sender]] =
+            nextAcceptedOfferRecordId;
+        _userAcceptedOfferRecordCount[msg.sender]++;
+
+        _userAcceptedOfferRecordIndexes[offer.seller][_userAcceptedOfferRecordCount[offer.seller]] =
+            nextAcceptedOfferRecordId;
+        _userAcceptedOfferRecordCount[offer.seller]++;
+
+        nextAcceptedOfferRecordId++;
     }
 }
