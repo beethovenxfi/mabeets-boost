@@ -46,7 +46,7 @@ contract MaBeetsBoostUnitTest is Test {
 
         // Deploy MaBeetsBoost contract
         vm.startPrank(owner);
-        maBeetsBoost = new MaBeetsBoost(address(reliquary), owner, PROTOCOL_FEE_BIPS, feeRecipient);
+        maBeetsBoost = new MaBeetsBoost(address(reliquary), owner, PROTOCOL_FEE_BIPS, feeRecipient, POOL_ID);
         vm.stopPrank();
 
         // Check that the fork is working by querying the Reliquary
@@ -186,7 +186,6 @@ contract MaBeetsBoostUnitTest is Test {
         assertEq(offer.id, offerId);
         assertEq(offer.seller, seller);
         assertEq(offer.relicId, relicId);
-        assertEq(offer.poolId, POOL_ID);
         assertEq(offer.feePerLevelBips, FEE_PER_LEVEL_BIPS);
         assertTrue(offer.active);
     }
@@ -482,7 +481,6 @@ contract MaBeetsBoostUnitTest is Test {
 
         assertEq(offerMeta.seller, seller, "Seller should match");
         assertEq(offerMeta.relicId, relicId, "Relic ID should match");
-        assertEq(offerMeta.poolId, POOL_ID, "Pool ID should match");
         assertEq(offerMeta.feePerLevelBips, FEE_PER_LEVEL_BIPS, "Fee should match");
         assertTrue(offerMeta.active, "Offer should be active");
         assertFalse(offerMeta.isOrphan, "Offer should not be orphaned");

@@ -65,7 +65,8 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
     IReliquary public immutable reliquary;
 
     uint256 public immutable maBeetsPoolId;
-    IERC20 public immutable freshBeetsBpt;
+    IERC20 public immutable maBeetsPoolToken;
+    uint256 public immutable maBeetsMaxMaturityLevel;
 
     // Counter for generating unique offer IDs
     uint256 public nextOfferId = 0;
@@ -118,6 +119,9 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
     error NoAddressZero();
     error BuyerRelicFullyMatured();
     error RelicNotFromMaBeetsPool();
+    error SellerAmountInvariantCheck();
+    error BuyerAmountInvariantCheck();
+    error RelicNotFullyMatureAfterSplit();
 
     constructor(
         address _reliquary,
@@ -128,7 +132,11 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
     ) Ownable(_owner) {
         reliquary = IReliquary(_reliquary);
         maBeetsPoolId = _maBeetsPoolId;
-        freshBeetsBpt = IERC20(reliquary.poolToken(_maBeetsPoolId));
+
+        // The pool token and level info are immutable on reliquary, so its safe to store these values locally
+        maBeetsPoolToken = IERC20(reliquary.poolToken(_maBeetsPoolId));
+        LevelInfo memory levelInfo = reliquary.getLevelInfo(_maBeetsPoolId);
+        maBeetsMaxMaturityLevel = levelInfo.requiredMaturities.length - 1;
 
         _setProtocolFeeBips(_protocolFeeBips);
         _setProtocolFeeRecipient(_protocolFeeRecipient);
@@ -178,11 +186,10 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
      */
     function acceptOffer(uint256 sellerRelicId, uint256 buyerRelicId) external nonReentrant {
         Offer storage offer = _offers[sellerRelicId];
+        address seller = _offers[sellerRelicId].seller;
 
         // Check if the offer exists
         require(_offerExists(sellerRelicId), OfferDoesNotExist());
-
-        address seller = offer.seller;
 
         // Verify seller still owns their relic
         require(_isRelicOwnedBy(sellerRelicId, seller), NotRelicOwner());
@@ -195,39 +202,35 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         require(_isRelicOwnedBy(buyerRelicId, msg.sender), NotRelicOwner());
         // Verify this contract is approved to operate on the buyer's relic
         require(_isApprovedToOperateOnRelic(buyerRelicId), RelicNotApproved());
-
-        require(_isRelicFromMaBeetsPool(sellerRelicId), RelicNotFromMaBeetsPool());
+        // Verify the buyer's relic is from the MaBeets pool
         require(_isRelicFromMaBeetsPool(buyerRelicId), RelicNotFromMaBeetsPool());
-
         // Verify the buyers relic is not fully matured
         require(!_isRelicMaxMaturity(buyerRelicId), BuyerRelicFullyMatured());
 
+        // save the state of the positions before the operation
         PositionInfo memory sellerPosition = reliquary.getPositionForId(sellerRelicId);
         PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
 
-        // Calculate the fee amounts
-        uint256 feeBips = (sellerPosition.level - buyerPosition.level) * offer.feePerLevelBips;
-        uint256 totalFeeAmount = (buyerPosition.amount * feeBips) / BIPS_DENOMINATOR;
-        uint256 protocolFeeAmount = (totalFeeAmount * protocolFeeBips) / BIPS_DENOMINATOR;
-        uint256 sellerFeeAmount = totalFeeAmount - protocolFeeAmount;
+        // execute the operation state changes
+        (uint256 newBuyerRelicId, uint256 sellerFeeAmount, uint256 protocolFeeAmount) =
+            _acceptOffer(sellerRelicId, buyerRelicId);
 
-        // Merge the relics (this will combine both into sellerRelicId)
-        reliquary.merge(buyerRelicId, sellerRelicId);
+        // We strictly enforce post operation invariant checks
+        PositionInfo memory sellerPositionAfter = reliquary.getPositionForId(sellerRelicId);
+        PositionInfo memory newBuyerPosition = reliquary.getPositionForId(newBuyerRelicId);
 
-        // This transfers the new relic directly to the buyer
-        // We leave the protocol fee amount in the seller's relic and process it below
-        uint256 newBuyerRelicId = reliquary.split(sellerRelicId, buyerPosition.amount - totalFeeAmount, msg.sender);
+        // The seller's relics should maintain max maturity after the offer is accepted. The properties of split ensure
+        // that if the seller's relic is at max maturity, the new buyer's relic will also be at max maturity
+        require(_isRelicMaxMaturity(sellerRelicId), RelicNotFullyMatureAfterSplit());
 
-        // The relic should maintain max maturity after the split
-        require(_isRelicMaxMaturity(sellerRelicId), RelicNotFullyMatured());
-        // The new relic should also be at max maturity
-        require(_isRelicMaxMaturity(newBuyerRelicId), RelicNotFullyMatured());
+        // The amount of the seller's relic should never decrease
+        require(sellerPositionAfter.amount == sellerPosition.amount + sellerFeeAmount, SellerAmountInvariantCheck());
 
-        if (protocolFeeAmount > 0) {
-            // Reliquary's withdraw function will send the tokens to msg.sender (this contract)
-            reliquary.withdraw(protocolFeeAmount, sellerRelicId);
-            freshBeetsBpt.safeTransfer(protocolFeeRecipient, protocolFeeAmount);
-        }
+        // The amount of the buyer's new relic should never increase
+        require(
+            newBuyerPosition.amount == buyerPosition.amount - sellerFeeAmount - protocolFeeAmount,
+            BuyerAmountInvariantCheck()
+        );
 
         _saveAcceptedOfferRecord(
             offer,
@@ -245,6 +248,33 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         emit OfferAccepted(
             seller, msg.sender, sellerRelicId, newBuyerRelicId, offer.id, sellerFeeAmount, protocolFeeAmount
         );
+    }
+
+    function _acceptOffer(uint256 sellerRelicId, uint256 buyerRelicId)
+        internal
+        returns (uint256 newBuyerRelicId, uint256 sellerFeeAmount, uint256 protocolFeeAmount)
+    {
+        Offer storage offer = _offers[sellerRelicId];
+        PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
+
+        // Calculate the fee amounts
+        uint256 feeBips = (maBeetsMaxMaturityLevel - buyerPosition.level) * offer.feePerLevelBips;
+        uint256 totalFeeAmount = (buyerPosition.amount * feeBips) / BIPS_DENOMINATOR;
+        protocolFeeAmount = (totalFeeAmount * protocolFeeBips) / BIPS_DENOMINATOR;
+        sellerFeeAmount = totalFeeAmount - protocolFeeAmount;
+
+        // Merge the relics (this will combine both into sellerRelicId)
+        reliquary.merge(buyerRelicId, sellerRelicId);
+
+        // This transfers the new relic directly to the buyer
+        // We leave the protocol fee amount in the seller's relic and process it below
+        newBuyerRelicId = reliquary.split(sellerRelicId, buyerPosition.amount - totalFeeAmount, msg.sender);
+
+        if (protocolFeeAmount > 0) {
+            // Reliquary's withdraw function will send the tokens to msg.sender (this contract)
+            reliquary.withdraw(protocolFeeAmount, sellerRelicId);
+            maBeetsPoolToken.safeTransfer(protocolFeeRecipient, protocolFeeAmount);
+        }
     }
 
     /**
@@ -288,10 +318,8 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
      */
     function getOffer(uint256 relicId) public view returns (OfferWithMetadata memory) {
         PositionInfo memory position = reliquary.getPositionForId(relicId);
-        LevelInfo memory levelInfo = reliquary.getLevelInfo(maBeetsPoolId);
         uint256 maturity = block.timestamp - position.entry;
-        uint256 maxMaturity = levelInfo.requiredMaturities[levelInfo.requiredMaturities.length - 1];
-        uint256 excessMaturity = maturity > maxMaturity ? maturity - maxMaturity : 0;
+        uint256 excessMaturity = maturity > maBeetsMaxMaturityLevel ? maturity - maBeetsMaxMaturityLevel : 0;
 
         return OfferWithMetadata({
             id: _offers[relicId].id,
@@ -425,9 +453,8 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
 
     function _isRelicMaxMaturity(uint256 relicId) internal view returns (bool) {
         PositionInfo memory position = reliquary.getPositionForId(relicId);
-        LevelInfo memory levelInfo = _getMaBeetsLevelInfo();
 
-        return position.level == levelInfo.requiredMaturities.length - 1;
+        return position.level == maBeetsMaxMaturityLevel;
     }
 
     function _isRelicOwnedBy(uint256 relicId, address owner) internal view returns (bool) {
@@ -458,10 +485,6 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         return false;
     }
 
-    function _getMaBeetsLevelInfo() internal view returns (LevelInfo memory) {
-        return reliquary.getLevelInfo(maBeetsPoolId);
-    }
-
     function _saveAcceptedOfferRecord(
         Offer memory offer,
         PositionInfo memory sellerPosition,
@@ -479,7 +502,6 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
             newBuyerRelicId: newBuyerRelicId,
             seller: offer.seller,
             sellerRelicId: offer.relicId,
-            poolId: offer.poolId,
             feePerLevelBips: offer.feePerLevelBips,
             amount: buyerPosition.amount,
             amountAfterFee: buyerPosition.amount - sellerFeeAmount - protocolFeeAmount,
