@@ -163,8 +163,6 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         require(_isRelicMaxMaturity(relicId), RelicNotFullyMatured());
         require(_isRelicFromMaBeetsPool(relicId), RelicNotFromMaBeetsPool());
 
-        PositionInfo memory position = reliquary.getPositionForId(relicId);
-
         // Generate a new offer ID
         offerId = nextOfferId;
         // Increment the next offer ID

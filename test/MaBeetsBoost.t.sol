@@ -19,6 +19,7 @@ contract MaBeetsBoostUnitTest is Test {
     address private feeRecipient = address(0x4);
     address private user1 = address(0x5); // Additional test user
     address private user2 = address(0x6); // Additional test user
+    address private seller2 = address(0x7); // Additional test user
 
     // Test parameters
     uint256 private constant PROTOCOL_FEE_BIPS = 1000; // 10%
@@ -32,6 +33,8 @@ contract MaBeetsBoostUnitTest is Test {
 
     // Store fork ID
     uint256 private forkId;
+
+    uint256 timeForMaxMaturity;
 
     // Setup for tests
     function setUp() public {
@@ -53,8 +56,12 @@ contract MaBeetsBoostUnitTest is Test {
         console.log("Reliquary address:", address(reliquary));
         console.log("LP Token address:", address(lpToken));
 
+        // Get the time for max maturity
+        LevelInfo memory levelInfo = reliquary.getLevelInfo(POOL_ID);
+        timeForMaxMaturity = levelInfo.requiredMaturities[levelInfo.requiredMaturities.length - 1] + 1 days;
+
         // Setup seller with a fully matured relic
-        _setupSellerWithMaturedRelic();
+        _setupSellersWithMaturedRelic();
 
         // Setup buyer with non-matured relic
         _setupBuyerWithNonMaturedRelic();
@@ -63,35 +70,30 @@ contract MaBeetsBoostUnitTest is Test {
         _setupAdditionalUsers();
     }
 
-    function _setupSellerWithMaturedRelic() private {
-        uint256 amountToTransfer = 1000 ether;
-        _distributeLpTokens(seller, amountToTransfer);
+    function _createRelic(address user, uint256 amount) private returns (uint256 relicId) {
+        _distributeLpTokens(user, amount);
 
-        vm.startPrank(seller);
+        vm.startPrank(user);
 
-        // Approve LP tokens for reliquary
-        lpToken.approve(address(reliquary), amountToTransfer);
-
-        // Create a relic for the seller
-        uint256 relicId = reliquary.createRelicAndDeposit(seller, POOL_ID, 100 ether);
-
-        // We need to manipulate time to make it mature
-        uint256 currentTime = block.timestamp;
-
-        // Get the level info to determine how much time we need to advance
-        LevelInfo memory levelInfo = reliquary.getLevelInfo(POOL_ID);
-        uint256 timeNeeded = levelInfo.requiredMaturities[levelInfo.requiredMaturities.length - 1] + 1 days;
-
-        // Warp time forward to mature the relic
-        vm.warp(currentTime + timeNeeded);
-
-        // Update the position to reflect the new maturity
-        reliquary.updatePosition(relicId);
+        lpToken.approve(address(reliquary), amount);
+        relicId = reliquary.createRelicAndDeposit(user, POOL_ID, amount);
 
         // Approve MaBeetsBoost to operate on the relic
         reliquary.approve(address(maBeetsBoost), relicId);
 
         vm.stopPrank();
+    }
+
+    function _setupSellersWithMaturedRelic() private {
+        uint256 sellerRelicId = _createRelic(seller, 100 ether);
+        uint256 seller2RelicId = _createRelic(seller2, 1000 ether);
+
+        // Warp time to max maturity
+        vm.warp(block.timestamp + timeForMaxMaturity);
+
+        // Update the position to reflect the new maturity
+        reliquary.updatePosition(sellerRelicId);
+        reliquary.updatePosition(seller2RelicId);
     }
 
     function _setupBuyerWithNonMaturedRelic() private {
@@ -609,13 +611,13 @@ contract MaBeetsBoostUnitTest is Test {
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
 
-        uint256 user1RelicId = reliquary.tokenOfOwnerByIndex(user1, 0);
-        vm.prank(user1);
-        maBeetsBoost.createOffer(user1RelicId, FEE_PER_LEVEL_BIPS + 10);
+        uint256 seller2RelicId = reliquary.tokenOfOwnerByIndex(seller2, 0);
+        vm.prank(seller2);
+        maBeetsBoost.createOffer(seller2RelicId, FEE_PER_LEVEL_BIPS + 10);
 
         uint256 user2RelicId = reliquary.tokenOfOwnerByIndex(user2, 0);
         vm.prank(user2);
-        maBeetsBoost.acceptOffer(user1RelicId, user2RelicId);
+        maBeetsBoost.acceptOffer(seller2RelicId, user2RelicId);
 
         // Test pagination - get first record
         MaBeetsBoost.AcceptedOfferRecord[] memory firstPageRecords = maBeetsBoost.getAcceptedOfferRecords(0, 1, false);
@@ -645,21 +647,21 @@ contract MaBeetsBoostUnitTest is Test {
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
 
-        uint256 user1RelicId = reliquary.tokenOfOwnerByIndex(user1, 0);
-        vm.prank(user1);
-        maBeetsBoost.createOffer(user1RelicId, FEE_PER_LEVEL_BIPS + 10);
+        uint256 seller2RelicId = reliquary.tokenOfOwnerByIndex(seller2, 0);
+        vm.prank(seller2);
+        maBeetsBoost.createOffer(seller2RelicId, FEE_PER_LEVEL_BIPS + 10);
 
         uint256 user2RelicId = reliquary.tokenOfOwnerByIndex(user2, 0);
         vm.prank(user2);
-        maBeetsBoost.acceptOffer(user1RelicId, user2RelicId);
+        maBeetsBoost.acceptOffer(seller2RelicId, user2RelicId);
 
         // Get records for specific users
         MaBeetsBoost.AcceptedOfferRecord[] memory buyerRecords =
             maBeetsBoost.getUserAcceptedOfferRecords(buyer, 0, 10, false);
         MaBeetsBoost.AcceptedOfferRecord[] memory sellerRecords =
             maBeetsBoost.getUserAcceptedOfferRecords(seller, 0, 10, false);
-        MaBeetsBoost.AcceptedOfferRecord[] memory user1Records =
-            maBeetsBoost.getUserAcceptedOfferRecords(user1, 0, 10, false);
+        MaBeetsBoost.AcceptedOfferRecord[] memory seller2Records =
+            maBeetsBoost.getUserAcceptedOfferRecords(seller2, 0, 10, false);
         MaBeetsBoost.AcceptedOfferRecord[] memory user2Records =
             maBeetsBoost.getUserAcceptedOfferRecords(user2, 0, 10, false);
 
@@ -672,8 +674,8 @@ contract MaBeetsBoostUnitTest is Test {
         assertEq(sellerRecords[0].seller, seller, "Record should belong to seller");
 
         // Verify user1 records
-        assertEq(user1Records.length, 1, "User1 should have 1 record");
-        assertEq(user1Records[0].seller, user1, "Record should belong to user1");
+        assertEq(seller2Records.length, 1, "User1 should have 1 record");
+        assertEq(seller2Records[0].seller, seller2, "Record should belong to user1");
 
         // Verify user2 records
         assertEq(user2Records.length, 1, "User2 should have 1 record");
