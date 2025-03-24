@@ -359,8 +359,8 @@ contract MaBeetsBoostUnitTest is Test {
         assertTrue(offer.active);
     }
 
-    // Test attempt to accept offer with fully matured relic
-    function testAcceptOfferWithFullyMaturedRelic() public {
+    // Test attempt to accept offer with fully matured buyer relic
+    function testAcceptOfferWithFullyMaturedBuyerRelic() public {
         // Create offer
         vm.prank(seller);
         maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
@@ -390,12 +390,17 @@ contract MaBeetsBoostUnitTest is Test {
 
         assertEq(maBeetsBoost.protocolFeeBips(), newProtocolFee);
 
-        // Test with new fee percentage
-
         vm.prank(seller);
         maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
 
         uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
+
+        PositionInfo memory sellerPosition = reliquary.getPositionForId(sellerRelicId);
+        PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
+        uint256 levelDifference = sellerPosition.level - buyerPosition.level;
+        uint256 feeBips = levelDifference * FEE_PER_LEVEL_BIPS;
+        uint256 expectedTotalFee = (buyerPosition.amount * feeBips) / 10000;
+        uint256 expectedProtocolFee = (expectedTotalFee * newProtocolFee) / 10000;
 
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
@@ -403,9 +408,8 @@ contract MaBeetsBoostUnitTest is Test {
         uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
         uint256 protocolFeeReceived = finalFeeRecipientBalance - initialFeeRecipientBalance;
 
-        // Calculate expected protocol fee based on actual values in the contract
-        // This is approximate due to rounding errors
-        assertTrue(protocolFeeReceived > 0, "Protocol fee should be collected");
+        // The protocol receives the correct fee amount
+        assertEq(protocolFeeReceived, expectedProtocolFee);
     }
 
     // Test setting protocol fee recipient
@@ -429,7 +433,7 @@ contract MaBeetsBoostUnitTest is Test {
 
         uint256 finalFeeRecipientBalance = lpToken.balanceOf(newFeeRecipient);
 
-        assertTrue(finalFeeRecipientBalance > initialFeeRecipientBalance, "New fee recipient should receive fees");
+        assertGt(finalFeeRecipientBalance, initialFeeRecipientBalance);
     }
 
     // Test zero protocol fee
@@ -448,14 +452,10 @@ contract MaBeetsBoostUnitTest is Test {
 
         uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
 
-        assertEq(
-            finalFeeRecipientBalance,
-            initialFeeRecipientBalance,
-            "Fee recipient should not receive fees when protocol fee is zero"
-        );
+        // Fee recipient receives no fees when protocol fee is zero
+        assertEq(finalFeeRecipientBalance, initialFeeRecipientBalance);
     }
 
-    // Test max protocol fee validation
     function testMaxProtocolFeeValidation() public {
         uint256 feeToHigh = maBeetsBoost.MAX_PROTOCOL_FEE_BIPS() + 1;
 
@@ -465,7 +465,6 @@ contract MaBeetsBoostUnitTest is Test {
         vm.stopPrank();
     }
 
-    // Test protocol fee recipient zero address validation
     function testFeeRecipientZeroAddressValidation() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.NoAddressZero.selector));
