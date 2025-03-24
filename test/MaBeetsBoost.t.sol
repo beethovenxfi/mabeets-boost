@@ -1059,9 +1059,6 @@ contract MaBeetsBoostUnitTest is Test {
         PositionInfo memory newPosition = reliquary.getPositionForId(newBuyerRelicId);
         PositionInfo memory sellerPositionAfter = reliquary.getPositionForId(sellerRelicId);
 
-        console.log("before", sellerPositionBefore.amount);
-        console.log("after", sellerPositionAfter.amount);
-
         assertEq(newPosition.level, levelInfo.requiredMaturities.length - 1, "New relic should be at max maturity");
         assertEq(
             sellerPositionAfter.amount,
@@ -1069,5 +1066,158 @@ contract MaBeetsBoostUnitTest is Test {
             "Seller relic size should match expected amount"
         );
         assertEq(feeCollected, expectedProtocolFee, "Protocol fee should match expected amount");
+    }
+
+    function testAcceptOfferOfferNotActive() public {
+        // Create an offer
+        vm.prank(seller);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Cancel the offer to make it inactive
+        vm.prank(seller);
+        maBeetsBoost.cancelOffer(sellerRelicId);
+
+        // Try to accept an inactive offer
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.OfferNotActive.selector));
+        maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        vm.stopPrank();
+    }
+
+    function testAcceptOfferSellerNoLongerOwnsRelic() public {
+        // Create an offer
+        vm.prank(seller);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Transfer the seller's relic to someone else
+        vm.prank(seller);
+        reliquary.transferFrom(seller, user1, sellerRelicId);
+
+        // Try to accept an offer where seller no longer owns the relic
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.NotRelicOwner.selector));
+        maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        vm.stopPrank();
+    }
+
+    function testAcceptOfferSellerRelicNotApproved() public {
+        // Create an offer
+        vm.prank(seller);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Remove approval for the seller's relic
+        vm.prank(seller);
+        reliquary.approve(address(0), sellerRelicId);
+
+        // Try to accept an offer where seller's relic is not approved
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.RelicNotApproved.selector));
+        maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        vm.stopPrank();
+    }
+
+    function testAcceptOfferSellerRelicNotFullyMatured() public {
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Reduce maturity by adding more tokens
+        _distributeLpTokens(seller, 1000 ether);
+        vm.prank(seller);
+        lpToken.approve(address(reliquary), 1000 ether);
+        vm.prank(seller);
+        reliquary.deposit(1000 ether, sellerRelicId);
+
+        // Try to accept the offer with a seller relic that's no longer fully matured
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.RelicNotFullyMatured.selector));
+        maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        vm.stopPrank();
+    }
+
+    function testAcceptOfferSellerRelicTooSmall() public {
+        // Create an offer
+        vm.prank(seller);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Make the seller's relic too small
+        PositionInfo memory position = reliquary.getPositionForId(sellerRelicId);
+        uint256 withdrawAmount = position.amount - maBeetsBoost.MIN_RELIC_SIZE() + 1;
+
+        vm.prank(seller);
+        reliquary.withdraw(withdrawAmount, sellerRelicId);
+
+        // Try to accept an offer where the seller's relic is too small
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.RelicTooSmall.selector));
+        maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        vm.stopPrank();
+    }
+
+    function testAcceptOfferBuyerDoesNotOwnRelic() public {
+        // Create an offer
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Transfer the buyer's relic to someone else
+        vm.prank(buyer);
+        reliquary.transferFrom(buyer, user1, buyerRelicId);
+
+        // Try to accept an offer when the buyer doesn't own the relic anymore
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.NotRelicOwner.selector));
+        maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        vm.stopPrank();
+    }
+
+    function testAcceptOfferBuyerRelicNotApproved() public {
+        // Create an offer
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Remove approval for the buyer's relic
+        vm.prank(buyer);
+        reliquary.approve(address(0), buyerRelicId);
+
+        // Try to accept an offer when the buyer's relic is not approved
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.RelicNotApproved.selector));
+        maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        vm.stopPrank();
+    }
+
+    function testAcceptOfferBuyerRelicFullyMatured() public {
+        // Create an offer
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Make the buyer's relic fully matured
+        vm.warp(block.timestamp + timeForMaxMaturity);
+        reliquary.updatePosition(buyerRelicId);
+
+        // Try to accept an offer with a fully matured buyer relic
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.BuyerRelicFullyMatured.selector));
+        maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        vm.stopPrank();
+    }
+
+    function testAcceptOfferBuyerRelicTooSmall() public {
+        // Create an offer
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Create a small relic for the buyer
+        uint256 smallAmount = maBeetsBoost.MIN_RELIC_SIZE() - 1;
+        uint256 smallBuyerRelicId = _createRelic(buyer, smallAmount);
+
+        // Ensure it has some maturity but not full
+        vm.warp(block.timestamp + 1 days);
+        reliquary.updatePosition(smallBuyerRelicId);
+
+        // Try to accept an offer with a relic that's too small
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.RelicTooSmall.selector));
+        maBeetsBoost.acceptOffer(sellerRelicId, smallBuyerRelicId);
+        vm.stopPrank();
     }
 }
