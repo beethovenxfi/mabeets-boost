@@ -472,6 +472,35 @@ contract MaBeetsBoostUnitTest is Test {
         vm.stopPrank();
     }
 
+    function testGetOffer() public {
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        PositionInfo memory position = reliquary.getPositionForId(sellerRelicId);
+        MaBeetsBoost.OfferWithMetadata memory offerMeta = maBeetsBoost.getOffer(sellerRelicId);
+
+        assertEq(offerMeta.seller, seller);
+        assertEq(offerMeta.relicId, sellerRelicId);
+        assertEq(offerMeta.feePerLevelBips, FEE_PER_LEVEL_BIPS);
+        assertTrue(offerMeta.active);
+        assertFalse(offerMeta.isOrphan);
+        assertEq(offerMeta.relicSize, position.amount);
+        assertEq(offerMeta.relicLevel, position.level);
+        assertEq(offerMeta.relicEntry, position.entry);
+        assertEq(offerMeta.acceptedOffersCount, 0);
+    }
+
+    function testGetOfferByIdx() public {
+        vm.prank(seller);
+        uint256 offerIdx = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        MaBeetsBoost.OfferWithMetadata memory offer = maBeetsBoost.getOfferByIdx(offerIdx);
+
+        assertEq(offer.idx, offerIdx, "Offer ID should match");
+        assertEq(offer.seller, seller, "Seller should match");
+        assertEq(offer.relicId, sellerRelicId, "Relic ID should match");
+    }
+
     // Test getOffers pagination
     function testGetOffersPagination() public {
         // Create several offers
@@ -499,42 +528,7 @@ contract MaBeetsBoostUnitTest is Test {
         assertEq(offers[1].seller, seller, "Second offer in reverse should be from seller");
     }
 
-    // Test getOfferWithMetadata
-    function testGetOffer() public {
-        uint256 relicId = reliquary.tokenOfOwnerByIndex(seller, 0);
-
-        vm.prank(seller);
-        maBeetsBoost.createOffer(relicId, FEE_PER_LEVEL_BIPS);
-
-        MaBeetsBoost.OfferWithMetadata memory offerMeta = maBeetsBoost.getOffer(relicId);
-
-        assertEq(offerMeta.seller, seller, "Seller should match");
-        assertEq(offerMeta.relicId, relicId, "Relic ID should match");
-        assertEq(offerMeta.feePerLevelBips, FEE_PER_LEVEL_BIPS, "Fee should match");
-        assertTrue(offerMeta.active, "Offer should be active");
-        assertFalse(offerMeta.isOrphan, "Offer should not be orphaned");
-        assertTrue(offerMeta.excessMaturity > 0, "Should have excess maturity");
-        assertTrue(offerMeta.relicSize > 0, "Should have non-zero relic size");
-    }
-
-    // Test getOfferById
-    function testGetOfferById() public {
-        uint256 relicId = reliquary.tokenOfOwnerByIndex(seller, 0);
-
-        vm.prank(seller);
-        uint256 offerIdx = maBeetsBoost.createOffer(relicId, FEE_PER_LEVEL_BIPS);
-
-        MaBeetsBoost.OfferWithMetadata memory offer = maBeetsBoost.getOfferByIdx(offerIdx);
-
-        assertEq(offer.idx, offerIdx, "Offer ID should match");
-        assertEq(offer.seller, seller, "Seller should match");
-        assertEq(offer.relicId, relicId, "Relic ID should match");
-    }
-
-    // Test multiple offer acceptances
     function testMultipleOfferAcceptances() public {
-        // Create offer
-
         vm.prank(seller);
         maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
 
@@ -549,16 +543,12 @@ contract MaBeetsBoostUnitTest is Test {
         // Verify offer is still active
         MaBeetsBoost.OfferWithMetadata memory offer = maBeetsBoost.getOffer(sellerRelicId);
         assertTrue(offer.active, "Offer should remain active after multiple acceptances");
+        assertEq(offer.acceptedOffersCount, 2, "Offer should have 2 accepted offers");
     }
 
     // Test acceptance fee calculation with different level gaps
     function testFeeCalculationWithDifferentLevelGaps() public {
-        // Create offer from a fully matured seller
         PositionInfo memory sellerPosition = reliquary.getPositionForId(sellerRelicId);
-
-        // Verify the seller is at max level
-        LevelInfo memory levelInfo = reliquary.getLevelInfo(MABEETS_POOL_ID);
-        assertEq(sellerPosition.level, levelInfo.requiredMaturities.length - 1, "Seller should be at max level");
 
         vm.prank(seller);
         maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
@@ -573,6 +563,7 @@ contract MaBeetsBoostUnitTest is Test {
         vm.prank(user2);
         maBeetsBoost.acceptOffer(sellerRelicId, user2RelicId);
 
+        PositionInfo memory sellerPositionAfter = reliquary.getPositionForId(sellerRelicId);
         uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
         uint256 protocolFeeReceived = finalFeeRecipientBalance - initialFeeRecipientBalance;
 
@@ -581,10 +572,15 @@ contract MaBeetsBoostUnitTest is Test {
         uint256 feeBips = levelDiff * FEE_PER_LEVEL_BIPS;
         uint256 totalFee = (user2Position.amount * feeBips) / 10000;
         uint256 expectedProtocolFee = (totalFee * PROTOCOL_FEE_BIPS) / 10000;
+        uint256 expectedSellerFee = totalFee - expectedProtocolFee;
 
-        // Allow for small rounding differences
-        assertApproxEqRel(
-            protocolFeeReceived, expectedProtocolFee, 0.01e18, "Protocol fee should match expected amount"
+        assertEq(user2Position.level, 0, "User2 should be at level 0");
+
+        assertEq(protocolFeeReceived, expectedProtocolFee, "Protocol fee should match expected amount");
+        assertEq(
+            sellerPositionAfter.amount,
+            sellerPosition.amount + expectedSellerFee,
+            "Seller relic size should match expected amount"
         );
     }
 
@@ -594,7 +590,6 @@ contract MaBeetsBoostUnitTest is Test {
         vm.prank(seller);
         maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
 
-        // Have buyer accept the offer
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
 
@@ -678,19 +673,19 @@ contract MaBeetsBoostUnitTest is Test {
 
         // Verify buyer records
         assertEq(buyerRecords.length, 1, "Buyer should have 1 record");
-        assertEq(buyerRecords[0].buyer, buyer, "Record should belong to buyer");
+        assertEq(buyerRecords[0].buyer, buyer, "Record buyer should be buyer");
 
         // Verify seller records
         assertEq(sellerRecords.length, 1, "Seller should have 1 record");
-        assertEq(sellerRecords[0].seller, seller, "Record should belong to seller");
+        assertEq(sellerRecords[0].seller, seller, "Record seller should be seller");
 
         // Verify user1 records
         assertEq(seller2Records.length, 1, "User1 should have 1 record");
-        assertEq(seller2Records[0].seller, seller2, "Record should belong to user1");
+        assertEq(seller2Records[0].seller, seller2, "Record seller should be seller2");
 
         // Verify user2 records
         assertEq(user2Records.length, 1, "User2 should have 1 record");
-        assertEq(user2Records[0].buyer, user2, "Record should belong to user2");
+        assertEq(user2Records[0].buyer, user2, "Record buyer should be user2");
     }
 
     // Test getUserAcceptedOfferRecords pagination and reverse order
@@ -1020,7 +1015,6 @@ contract MaBeetsBoostUnitTest is Test {
 
     // Test edge case: accept offer when buyer and seller maturity difference is only 1 level
     function testAcceptOfferWithMinimalMaturityDifference() public {
-        // Create an offer first
         vm.prank(seller);
         maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
 
@@ -1036,6 +1030,7 @@ contract MaBeetsBoostUnitTest is Test {
         vm.warp(block.timestamp + timeNeeded);
         reliquary.updatePosition(highMaturityRelicId);
         PositionInfo memory highMaturityPosition = reliquary.getPositionForId(highMaturityRelicId);
+        PositionInfo memory sellerPositionBefore = reliquary.getPositionForId(sellerRelicId);
 
         // Approve the relic
         vm.prank(buyer);
@@ -1053,13 +1048,26 @@ contract MaBeetsBoostUnitTest is Test {
         // Verify minimal fee was collected (one level difference * fee per level)
         uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
         uint256 feeCollected = finalFeeRecipientBalance - initialFeeRecipientBalance;
+        uint256 expectedTotalFee = (highMaturityPosition.amount * FEE_PER_LEVEL_BIPS) / 10000; // only one level diff
+        uint256 expectedProtocolFee = (expectedTotalFee * PROTOCOL_FEE_BIPS) / 10000;
 
-        uint256 expectedProtocolFee =
-            (highMaturityPosition.amount * FEE_PER_LEVEL_BIPS * PROTOCOL_FEE_BIPS) / (10000 * 10000);
-        assertApproxEqRel(feeCollected, expectedProtocolFee, 0.01e18, "Minimal protocol fee should be collected");
+        assertTrue(
+            sellerPositionBefore.level - 1 == highMaturityPosition.level,
+            "Buyer's relic should be one level lower than max maturity"
+        );
 
-        // Verify the new relic is at max maturity
         PositionInfo memory newPosition = reliquary.getPositionForId(newBuyerRelicId);
+        PositionInfo memory sellerPositionAfter = reliquary.getPositionForId(sellerRelicId);
+
+        console.log("before", sellerPositionBefore.amount);
+        console.log("after", sellerPositionAfter.amount);
+
         assertEq(newPosition.level, levelInfo.requiredMaturities.length - 1, "New relic should be at max maturity");
+        assertEq(
+            sellerPositionAfter.amount,
+            sellerPositionBefore.amount + expectedTotalFee - expectedProtocolFee,
+            "Seller relic size should match expected amount"
+        );
+        assertEq(feeCollected, expectedProtocolFee, "Protocol fee should match expected amount");
     }
 }
