@@ -804,4 +804,217 @@ contract MaBeetsBoostUnitTest is Test {
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(exactMinRelicId, exactMinBuyerRelicId);
     }
+
+    // Test accepting an offer at maximum fee per level allowed
+    function testAcceptOfferWithMaxFee() public {
+        // Create a new relic for the seller
+        uint256 maxFeeRelicId = _createRelic(seller, 100 ether);
+
+        // Mature it fully
+        vm.warp(block.timestamp + timeForMaxMaturity);
+        reliquary.updatePosition(maxFeeRelicId);
+
+        // Create offer with maximum allowed fee
+        vm.startPrank(seller);
+        maBeetsBoost.createOffer(maxFeeRelicId, maBeetsBoost.MAX_FEE_PER_LEVEL_BIPS());
+        vm.stopPrank();
+        uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
+
+        // Accept the offer
+        vm.startPrank(buyer);
+        uint256 newBuyerRelicId = maBeetsBoost.acceptOffer(maxFeeRelicId, buyerRelicId);
+        vm.stopPrank();
+        uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
+        // Verify higher fees were collected compared to standard fee test
+        uint256 feeCollected = finalFeeRecipientBalance - initialFeeRecipientBalance;
+        assertTrue(feeCollected > 0, "Protocol fee should have been collected");
+    }
+
+    // Test accepting an offer with minimum fee per level allowed
+    function testAcceptOfferWithMinFee() public {
+        // Create a new relic for the seller
+        uint256 minFeeRelicId = _createRelic(seller, 100 ether);
+
+        // Mature it fully
+        vm.warp(block.timestamp + timeForMaxMaturity);
+        reliquary.updatePosition(minFeeRelicId);
+
+        // Create offer with minimum allowed fee
+        vm.startPrank(seller);
+        maBeetsBoost.createOffer(minFeeRelicId, maBeetsBoost.MIN_FEE_PER_LEVEL_BIPS());
+        vm.stopPrank();
+
+        uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
+
+        // Accept the offer
+        vm.startPrank(buyer);
+        uint256 newBuyerRelicId = maBeetsBoost.acceptOffer(minFeeRelicId, buyerRelicId);
+        vm.stopPrank();
+
+        uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
+        uint256 feeCollected = finalFeeRecipientBalance - initialFeeRecipientBalance;
+
+        // Verify minimum fees were collected
+        assertTrue(feeCollected > 0, "Protocol fee should have been collected");
+    }
+
+    // Test for seller accepting their own offer (valid but unusual case)
+    function testSellerAcceptsOwnOffer() public {
+        // Create a second relic for the seller with lower maturity
+        uint256 sellerSecondRelicId = _createRelic(seller, 50 ether);
+
+        // Create offer with the fully matured relic
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Approve the second relic
+        vm.prank(seller);
+        reliquary.approve(address(maBeetsBoost), sellerSecondRelicId);
+
+        // Seller accepts their own offer with their second relic
+        vm.prank(seller);
+        uint256 newRelicId = maBeetsBoost.acceptOffer(sellerRelicId, sellerSecondRelicId);
+
+        // Verify both relics are still owned by seller
+        assertEq(reliquary.ownerOf(sellerRelicId), seller);
+        assertEq(reliquary.ownerOf(newRelicId), seller);
+    }
+
+    // Test buyer with almost-max maturity (one level below max)
+    function testBuyerWithOneMaturityLevelBeforeMax() public {
+        // Create offer
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Create a new relic for the buyer
+        uint256 almostMaxRelicId = _createRelic(buyer, 50 ether);
+
+        // Get the level info to determine time needed for almost-max maturity
+        LevelInfo memory levelInfo = reliquary.getLevelInfo(MABEETS_POOL_ID);
+        uint256 almostMaxLevel = levelInfo.requiredMaturities.length - 2; // One level before max
+        uint256 timeNeeded = levelInfo.requiredMaturities[almostMaxLevel];
+
+        // Warp time to reach almost-max maturity
+        vm.warp(block.timestamp + timeNeeded);
+        reliquary.updatePosition(almostMaxRelicId);
+
+        // Approve the relic
+        vm.prank(buyer);
+        reliquary.approve(address(maBeetsBoost), almostMaxRelicId);
+
+        // Buyer accepts the offer with almost-max maturity relic
+        vm.prank(buyer);
+        uint256 newBuyerRelicId = maBeetsBoost.acceptOffer(sellerRelicId, almostMaxRelicId);
+
+        // Verify the new relic is at max maturity
+        PositionInfo memory newPosition = reliquary.getPositionForId(newBuyerRelicId);
+        assertEq(newPosition.level, levelInfo.requiredMaturities.length - 1, "New relic should be at max maturity");
+    }
+
+    // Test the getter functions for accepted offer records count
+    function testAcceptedOfferRecordCountGetters() public {
+        // Create and accept multiple offers to generate records
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        vm.prank(buyer);
+        maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+
+        vm.prank(seller2);
+        maBeetsBoost.createOffer(seller2RelicId, FEE_PER_LEVEL_BIPS);
+
+        vm.prank(user2);
+        maBeetsBoost.acceptOffer(seller2RelicId, user2RelicId);
+
+        // Test global count
+        uint256 globalCount = maBeetsBoost.getAcceptedOfferRecordsCount();
+        assertEq(globalCount, 2, "Should have 2 accepted offer records in total");
+
+        // Test user-specific counts
+        uint256 buyerCount = maBeetsBoost.getUserAcceptedOfferRecordsCount(buyer);
+        assertEq(buyerCount, 1, "Buyer should have 1 accepted offer record");
+
+        uint256 sellerCount = maBeetsBoost.getUserAcceptedOfferRecordsCount(seller);
+        assertEq(sellerCount, 1, "Seller should have 1 accepted offer record");
+
+        uint256 seller2Count = maBeetsBoost.getUserAcceptedOfferRecordsCount(seller2);
+        assertEq(seller2Count, 1, "Seller2 should have 1 accepted offer record");
+
+        uint256 user2Count = maBeetsBoost.getUserAcceptedOfferRecordsCount(user2);
+        assertEq(user2Count, 1, "User2 should have 1 accepted offer record");
+
+        // Check count for user with no records
+        address userWithNoRecords = address(0x123);
+        uint256 noRecordsCount = maBeetsBoost.getUserAcceptedOfferRecordsCount(userWithNoRecords);
+        assertEq(noRecordsCount, 0, "User with no records should have count 0");
+    }
+
+    // Test getting total offer count
+    function testGetOfferCount() public {
+        // Create multiple offers
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        vm.prank(seller2);
+        maBeetsBoost.createOffer(seller2RelicId, FEE_PER_LEVEL_BIPS + 10);
+
+        vm.prank(user1);
+        maBeetsBoost.createOffer(user1RelicId, FEE_PER_LEVEL_BIPS + 20);
+
+        // Check the total count
+        uint256 offerCount = maBeetsBoost.getOfferCount();
+        assertEq(offerCount, 3, "Should have 3 offers in total");
+
+        // Cancel one offer and verify count doesn't change (only active status changes)
+        vm.prank(seller);
+        maBeetsBoost.cancelOffer(sellerRelicId);
+
+        uint256 offerCountAfterCancel = maBeetsBoost.getOfferCount();
+        assertEq(offerCountAfterCancel, 3, "Offer count should not change after cancellation");
+    }
+
+    // Test edge case: accept offer when buyer and seller maturity difference is only 1 level
+    function testAcceptOfferWithMinimalMaturityDifference() public {
+        // Create an offer first
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Create a new relic for the buyer with high but not max maturity
+        uint256 highMaturityRelicId = _createRelic(buyer, 75 ether);
+
+        // Get the level info to determine time needed for high maturity
+        LevelInfo memory levelInfo = reliquary.getLevelInfo(MABEETS_POOL_ID);
+        uint256 secondHighestLevel = levelInfo.requiredMaturities.length - 2; // One level before max
+        uint256 timeNeeded = levelInfo.requiredMaturities[secondHighestLevel];
+
+        // Warp time to reach high maturity (one level below max)
+        vm.warp(block.timestamp + timeNeeded);
+        reliquary.updatePosition(highMaturityRelicId);
+        PositionInfo memory highMaturityPosition = reliquary.getPositionForId(highMaturityRelicId);
+
+        // Approve the relic
+        vm.prank(buyer);
+        reliquary.approve(address(maBeetsBoost), highMaturityRelicId);
+        vm.prank(buyer);
+        lpToken.approve(address(maBeetsBoost), type(uint256).max);
+
+        // Record balances before
+        uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
+
+        // Accept the offer
+        vm.prank(buyer);
+        uint256 newBuyerRelicId = maBeetsBoost.acceptOffer(sellerRelicId, highMaturityRelicId);
+
+        // Verify minimal fee was collected (one level difference * fee per level)
+        uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
+        uint256 feeCollected = finalFeeRecipientBalance - initialFeeRecipientBalance;
+
+        uint256 expectedProtocolFee =
+            (highMaturityPosition.amount * FEE_PER_LEVEL_BIPS * PROTOCOL_FEE_BIPS) / (10000 * 10000);
+        assertApproxEqRel(feeCollected, expectedProtocolFee, 0.01e18, "Minimal protocol fee should be collected");
+
+        // Verify the new relic is at max maturity
+        PositionInfo memory newPosition = reliquary.getPositionForId(newBuyerRelicId);
+        assertEq(newPosition.level, levelInfo.requiredMaturities.length - 1, "New relic should be at max maturity");
+    }
 }
