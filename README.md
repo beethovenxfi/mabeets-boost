@@ -1,66 +1,22 @@
-## Foundry
+## maBEETS Boost
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+maBEETS Boost is a contract that allows users to sell their excess maturity to other users for a fee. Once a maBEETS relic reaches max maturity, it continues to accrue excess maturity in perpetuity. For simplicity, maBEETS Boost will always boost a relic to max maturity, there is no such thing as a partial boost. The contract ensures that the seller's relic always maintains the maximum maturity level after the offer is accepted.
 
-Foundry consists of:
+## How it works
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+There are two parties, a `seller` and a `buyer`.
 
-## Documentation
+The `seller` creates an offer to sell their excess maturity to the `buyer`.
 
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
-
-```shell
-$ forge build
+```solidity
+maBeetsBoost.createOffer(relicId, feePerLevelBips);
 ```
 
-### Test
+The `buyer` accepts the offer, at which point the buyer's relic is merged into the seller's relic, and a new relic is created for the buyer using the `split` function.
 
-```shell
-$ forge test
+```solidity
+maBeetsBoost.acceptOffer(offerId);
 ```
 
-### Format
+The `feePerLevelBips` is the fee per level of maturity that the buyer will pay to the seller. The fee is paid in the form of a percentage of the relic's size. For example, if the fee is 0.1% per level, the buyer will pay
 
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```

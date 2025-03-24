@@ -64,7 +64,9 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
     // We set a minimum relic size to prevent any potential issues with rounding for very small relics
     uint256 public constant MIN_RELIC_SIZE = 1e18;
 
+    // The protocol fee percentage in basis points
     uint256 public protocolFeeBips;
+    // The address that receives the protocol fee
     address public protocolFeeRecipient;
 
     IReliquary public immutable reliquary;
@@ -162,16 +164,19 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         // Check if there's already an active offer for this relic
         require(!_isOfferActive(relicId), OfferAlreadyActive());
 
+        // Verify the fee is within the allowed range
         require(feePerLevelBips <= MAX_FEE_PER_LEVEL_BIPS, FeeTooHigh());
         require(feePerLevelBips >= MIN_FEE_PER_LEVEL_BIPS, FeeTooLow());
 
         // Verify the user owns the relic
         require(_isRelicOwnedBy(relicId, msg.sender), NotRelicOwner());
         // Verify this contract is approved to operate on the relic
-
         require(_isApprovedToOperateOnRelic(relicId), RelicNotApproved());
+        // Verify the relic is fully matured
         require(_isRelicMaxMaturity(relicId), RelicNotFullyMatured());
+        // Verify the relic is from the MaBeets pool
         require(_isRelicFromMaBeetsPool(relicId), RelicNotFromMaBeetsPool());
+        // Verify the relic is large enough
         require(_isRelicLargeEnough(relicId), RelicTooSmall());
 
         uint256 offerIdx = _nextOfferIdx;
@@ -236,16 +241,18 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
 
         // While not strictly necessary, we enforce post operation invariant checks
         // As a means for communicating the expected outcome of the operation
-        // An offer may only be accepted under the following conditions
+        // An offer may only be accepted if the following conditions are met
         PositionInfo memory sellerPositionAfter = reliquary.getPositionForId(sellerRelicId);
         PositionInfo memory newBuyerPosition = reliquary.getPositionForId(newBuyerRelicId);
 
+        // Verify the seller still owns their relic
         require(_isRelicOwnedBy(sellerRelicId, seller), NotRelicOwner());
+        // Verify the buyer owns the new relic
         require(_isRelicOwnedBy(newBuyerRelicId, msg.sender), NotRelicOwner());
 
-        // The seller's relics should maintain max maturity after the offer is accepted. The properties of split ensure
-        // that if the seller's relic is at max maturity, the new buyer's relic will also be at max maturity
+        // Verify both relics are at max maturity after the offer is accepted
         require(_isRelicMaxMaturity(sellerRelicId), RelicNotFullyMatureAfterSplit());
+        require(_isRelicMaxMaturity(newBuyerRelicId), RelicNotFullyMatureAfterSplit());
 
         // The amount of the seller's relic should never decrease
         require(sellerPositionAfter.amount == sellerPosition.amount + sellerFeeAmount, SellerAmountInvariantCheck());
@@ -256,9 +263,8 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
             BuyerAmountInvariantCheck()
         );
 
-        // The buyer's original relic should be empty after the merge/split
         PositionInfo memory oldBuyerPositionAfter = reliquary.getPositionForId(buyerRelicId);
-
+        // The buyer's original relic should be empty after the merge/split
         require(oldBuyerPositionAfter.amount == 0, OriginalBuyerRelicNotEmpty());
 
         _saveAcceptedOfferRecord(
