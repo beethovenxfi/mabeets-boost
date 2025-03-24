@@ -527,6 +527,10 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
             return true;
         }
 
+        if (!_isRelicMaxMaturity(relicId)) {
+            return true;
+        }
+
         return false;
     }
 
