@@ -131,6 +131,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
     error SellerAmountInvariantCheck();
     error BuyerAmountInvariantCheck();
     error RelicNotFullyMatureAfterSplit();
+    error OriginalBuyerRelicNotEmpty();
 
     constructor(
         address _reliquary,
@@ -235,6 +236,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
 
         // While not strictly necessary, we enforce post operation invariant checks
         // As a means for communicating the expected outcome of the operation
+        // An offer may only be accepted under the following conditions
         PositionInfo memory sellerPositionAfter = reliquary.getPositionForId(sellerRelicId);
         PositionInfo memory newBuyerPosition = reliquary.getPositionForId(newBuyerRelicId);
 
@@ -253,6 +255,11 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
             newBuyerPosition.amount == buyerPosition.amount - sellerFeeAmount - protocolFeeAmount,
             BuyerAmountInvariantCheck()
         );
+
+        // The buyer's original relic should be empty after the merge/split
+        PositionInfo memory oldBuyerPositionAfter = reliquary.getPositionForId(buyerRelicId);
+
+        require(oldBuyerPositionAfter.amount == 0, OriginalBuyerRelicNotEmpty());
 
         _saveAcceptedOfferRecord(
             sellerRelicId,
@@ -557,12 +564,14 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         _userAcceptedOfferRecordIndexes[buyer][_userAcceptedOfferRecordCount[buyer]] = _nextAcceptedOfferRecordIdx;
         _userAcceptedOfferRecordCount[buyer]++;
 
+        // Store the record for the seller
         _userAcceptedOfferRecordIndexes[offer.seller][_userAcceptedOfferRecordCount[offer.seller]] =
             _nextAcceptedOfferRecordIdx;
         _userAcceptedOfferRecordCount[offer.seller]++;
 
         _nextAcceptedOfferRecordIdx++;
 
+        // Increment the num accepted offers for the seller's relic
         _relicNumAcceptedOffers[sellerRelicId]++;
     }
 }
