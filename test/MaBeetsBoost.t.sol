@@ -172,99 +172,143 @@ contract MaBeetsBoostUnitTest is Test {
         assertEq(maBeetsBoost.protocolFeeRecipient(), feeRecipient);
     }
 
-    // Test offer creation
     function testCreateOffer() public {
-        // Get seller's relic
-        uint256 relicId = reliquary.tokenOfOwnerByIndex(seller, 0);
-
         // Create offer
         vm.startPrank(seller);
-        uint256 offerIdx = maBeetsBoost.createOffer(relicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerIdx = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
         vm.stopPrank();
 
         // Get the offer
-        MaBeetsBoost.OfferWithMetadata memory offer = maBeetsBoost.getOffer(relicId);
+        MaBeetsBoost.OfferWithMetadata memory offer = maBeetsBoost.getOffer(sellerRelicId);
 
         // Verify offer details
         assertEq(offer.idx, offerIdx);
         assertEq(offer.seller, seller);
-        assertEq(offer.relicId, relicId);
+        assertEq(offer.relicId, sellerRelicId);
         assertEq(offer.feePerLevelBips, FEE_PER_LEVEL_BIPS);
         assertTrue(offer.active);
     }
 
     // Test fee validation in createOffer
     function testCreateOfferFeeTooHigh() public {
-        uint256 relicId = reliquary.tokenOfOwnerByIndex(seller, 0);
         uint256 feeTooHigh = maBeetsBoost.MAX_FEE_PER_LEVEL_BIPS() + 1;
 
         vm.startPrank(seller);
         vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.FeeTooHigh.selector));
-        maBeetsBoost.createOffer(relicId, feeTooHigh);
+        maBeetsBoost.createOffer(sellerRelicId, feeTooHigh);
         vm.stopPrank();
     }
 
     function testCreateOfferFeeTooLow() public {
-        uint256 relicId = reliquary.tokenOfOwnerByIndex(seller, 0);
         uint256 feeTooLow = maBeetsBoost.MIN_FEE_PER_LEVEL_BIPS() - 1;
 
         vm.startPrank(seller);
         vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.FeeTooLow.selector));
-        maBeetsBoost.createOffer(relicId, feeTooLow);
+        maBeetsBoost.createOffer(sellerRelicId, feeTooLow);
         vm.stopPrank();
     }
 
-    // Test offer cancellation
     function testCancelOffer() public {
-        // Create offer first
-        uint256 relicId = reliquary.tokenOfOwnerByIndex(seller, 0);
-
         vm.startPrank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(relicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
 
         // Cancel offer
-        maBeetsBoost.cancelOffer(relicId);
+        maBeetsBoost.cancelOffer(sellerRelicId);
         vm.stopPrank();
 
         // Verify offer is inactive
-        MaBeetsBoost.OfferWithMetadata memory offer = maBeetsBoost.getOffer(relicId);
-        assertFalse(offer.active);
+        assertFalse(maBeetsBoost.getOffer(sellerRelicId).active);
     }
 
-    // Test unauthorized offer cancellation
     function testUnauthorizedCancelOffer() public {
-        // Create offer first
-        uint256 relicId = reliquary.tokenOfOwnerByIndex(seller, 0);
-
         vm.prank(seller);
-        maBeetsBoost.createOffer(relicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
 
         // Try to cancel as non-owner
         vm.startPrank(buyer);
-        vm.expectRevert(); // Expect revert for unauthorized cancellation
-        maBeetsBoost.cancelOffer(relicId);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.NotOfferOwner.selector));
+        maBeetsBoost.cancelOffer(sellerRelicId);
         vm.stopPrank();
     }
 
-    // Test orphan offer cancellation
-    function testCancelOrphanOffer() public {
-        // Create offer first
-        uint256 relicId = reliquary.tokenOfOwnerByIndex(seller, 0);
-
+    function testCancelOrphanOfferWithoutApproval() public {
         vm.prank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(relicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        assertTrue(maBeetsBoost.getOffer(sellerRelicId).active);
 
         // Make the offer orphaned by removing approval
         vm.prank(seller);
-        reliquary.approve(address(0), relicId);
+        reliquary.approve(address(0), sellerRelicId);
 
         // Anyone can cancel an orphaned offer
         vm.prank(buyer);
-        maBeetsBoost.cancelOrphanOffer(relicId);
+        maBeetsBoost.cancelOrphanOffer(sellerRelicId);
 
         // Verify offer is inactive
-        MaBeetsBoost.OfferWithMetadata memory offer = maBeetsBoost.getOffer(relicId);
-        assertFalse(offer.active);
+        assertFalse(maBeetsBoost.getOffer(sellerRelicId).active);
+    }
+
+    function testCancelOrphanOfferOwnerChanged() public {
+        vm.prank(seller);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        assertTrue(maBeetsBoost.getOffer(sellerRelicId).active);
+
+        // Make the offer orphaned by transferring it to another user
+        vm.prank(seller);
+        reliquary.transferFrom(seller, user1, sellerRelicId);
+
+        // Anyone can cancel an orphaned offer
+        vm.prank(buyer);
+        maBeetsBoost.cancelOrphanOffer(sellerRelicId);
+
+        // Verify offer is inactive
+        assertFalse(maBeetsBoost.getOffer(sellerRelicId).active);
+    }
+
+    function testCancelOrphanRelicTooSmall() public {
+        vm.prank(seller);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        assertTrue(maBeetsBoost.getOffer(sellerRelicId).active);
+
+        PositionInfo memory position = reliquary.getPositionForId(sellerRelicId);
+
+        // Make the offer orphaned by making it too small
+        vm.prank(seller);
+        reliquary.withdraw(position.amount - 1e18 + 1, sellerRelicId);
+
+        // Anyone can cancel an orphaned offer
+        vm.prank(buyer);
+        maBeetsBoost.cancelOrphanOffer(sellerRelicId);
+
+        // Verify offer is inactive
+        assertFalse(maBeetsBoost.getOffer(sellerRelicId).active);
+    }
+
+    function testCancelOrphanRelicNotMatured() public {
+        vm.startPrank(seller);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        assertTrue(maBeetsBoost.getOffer(sellerRelicId).active);
+
+        PositionInfo memory position = reliquary.getPositionForId(sellerRelicId);
+        uint256 amountToDeposit = position.amount * 2;
+        lpToken.approve(address(reliquary), amountToDeposit);
+        vm.stopPrank();
+
+        _distributeLpTokens(seller, amountToDeposit);
+        // Make the offer orphaned by depositing enough to reduce the maturity level
+        vm.prank(seller);
+        reliquary.deposit(amountToDeposit, sellerRelicId);
+
+        // Anyone can cancel an orphaned offer
+        vm.prank(buyer);
+        maBeetsBoost.cancelOrphanOffer(sellerRelicId);
+
+        // Verify offer is inactive
+        assertFalse(maBeetsBoost.getOffer(sellerRelicId).active);
     }
 
     // Test non-orphan offer cancellation failure
@@ -277,18 +321,18 @@ contract MaBeetsBoostUnitTest is Test {
 
         // Try to cancel as orphan when it's not orphaned
         vm.startPrank(buyer);
-        vm.expectRevert(); // Expect revert for non-orphaned offer
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.OfferNotOrphaned.selector));
         maBeetsBoost.cancelOrphanOffer(relicId);
         vm.stopPrank();
     }
 
-    // Test accepting an offer
     function testAcceptOffer() public {
         vm.prank(seller);
         maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
 
         // Record initial balances and states
         PositionInfo memory buyerPositionBefore = reliquary.getPositionForId(buyerRelicId);
+        PositionInfo memory sellerPositionBefore = reliquary.getPositionForId(sellerRelicId);
         uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
         uint256 initialBuyerLevel = buyerPositionBefore.level;
 
@@ -298,15 +342,17 @@ contract MaBeetsBoostUnitTest is Test {
 
         // Verify states after acceptance
         PositionInfo memory buyerPositionAfter = reliquary.getPositionForId(newBuyerRelicId);
+        PositionInfo memory sellerPositionAfter = reliquary.getPositionForId(sellerRelicId);
         uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
 
         // Verify fee recipient received protocol fees
-        assertTrue(finalFeeRecipientBalance > initialFeeRecipientBalance, "Fee recipient should have received fees");
+        assertTrue(finalFeeRecipientBalance > initialFeeRecipientBalance);
 
-        // Verify the buyer's relic is at the original amount minus fees
-        assertLt(
-            buyerPositionAfter.amount, buyerPositionBefore.amount, "Buyer's relic amount should be reduced by fees"
-        );
+        // Verify the new buyer's relic is smaller than the original
+        assertLt(buyerPositionAfter.amount, buyerPositionBefore.amount);
+
+        // Verify the seller's relic size has increased
+        assertGt(sellerPositionAfter.amount, sellerPositionBefore.amount);
 
         // Ensure the offer is still active after acceptance
         MaBeetsBoost.OfferWithMetadata memory offer = maBeetsBoost.getOffer(sellerRelicId);
