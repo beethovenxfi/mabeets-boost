@@ -32,6 +32,8 @@ contract MaBeetsBoostFuzzTest is Test {
     IReliquary private reliquary;
     IERC20 private lpToken;
 
+    uint256 private constant MAX_MATURED_LEVEL = 10;
+
     // Test accounts
     address private owner = address(0x1);
     address private seller = address(0x2);
@@ -144,7 +146,8 @@ contract MaBeetsBoostFuzzTest is Test {
         // Ensure the buyer relic is never max matured
         buyerRelicMaturity = bound(buyerRelicMaturity, 0, timeForMaxMaturity - 1);
         // We need to ensure that the seller's relic is mature enough to accept the offer
-        sellerRelicMaturity = bound(sellerRelicMaturity, timeForMaxMaturity * 2, BIG_NUMBER);
+        // Assuming 10 weeks to max maturity, 10 weeks * 1,000,000 = 10,000,000 weeks = 192,307 years
+        sellerRelicMaturity = bound(sellerRelicMaturity, timeForMaxMaturity * 2, timeForMaxMaturity * 1_000_000);
 
         vm.prank(owner);
         maBeetsBoost.setProtocolFeeBips(protocolFeeBips);
@@ -174,7 +177,7 @@ contract MaBeetsBoostFuzzTest is Test {
         uint256 expectedBuyerRelicAmount = buyerPositionBefore.amount - expectedTotalFeeAmount;
 
         vm.prank(buyer);
-        uint256 newBuyerRelicId = maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId);
+        uint256 newBuyerRelicId = maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId, MAX_MATURED_LEVEL);
         vm.stopPrank();
 
         // Verify the relics are owned by the correct addresses

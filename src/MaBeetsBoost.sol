@@ -6,6 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {console} from "forge-std/console.sol";
 
 /**
@@ -13,7 +14,7 @@ import {console} from "forge-std/console.sol";
  * @notice A contract that allows users to sell their excess maturity from fully matured
  * Reliquary positions to users with non-fully matured positions.
  */
-contract MaBeetsBoost is Ownable, ReentrancyGuard {
+contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
     using SafeERC20 for IERC20;
 
     struct Offer {
@@ -128,12 +129,14 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
     error MaxSizeCannotBeZero();
     error ProtocolFeeTooHigh();
     error NoAddressZero();
-    error BuyerRelicFullyMatured();
     error RelicNotFromMaBeetsPool();
     error SellerAmountInvariantCheck();
     error BuyerAmountInvariantCheck();
     error RelicNotFullyMatureAfterSplit();
     error OriginalBuyerRelicNotEmpty();
+    error BoostToLevelTooLow();
+    error BuyerRelicTooLargeToBeBoosted();
+    error RelicFullyMatured();
 
     constructor(
         address _reliquary,
@@ -198,8 +201,9 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
      * @notice Accept an offer to boost a relic's maturity
      * @param sellerRelicId The ID of the seller's relic
      * @param buyerRelicId The ID of the buyer's relic to boost
+     * @param boostToLevel The level to boost the buyer's relic to
      */
-    function acceptOffer(uint256 sellerRelicId, uint256 buyerRelicId)
+    function acceptOffer(uint256 sellerRelicId, uint256 buyerRelicId, uint256 boostToLevel)
         external
         nonReentrant
         returns (uint256 newBuyerRelicId)
@@ -214,8 +218,6 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         require(_isRelicOwnedBy(sellerRelicId, seller), NotRelicOwner());
         // Verify this contract is approved to operate on the seller's relic
         require(_isApprovedToOperateOnRelic(sellerRelicId), RelicNotApproved());
-        // Verify the seller's relic is still fully matured
-        require(_isRelicMaxMaturity(sellerRelicId), RelicNotFullyMatured());
         // Verify the seller's relic is still large enough
         require(_isRelicLargeEnough(sellerRelicId), RelicTooSmall());
 
@@ -225,10 +227,17 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         require(_isApprovedToOperateOnRelic(buyerRelicId), RelicNotApproved());
         // Verify the buyer's relic is from the MaBeets pool
         require(_isRelicFromMaBeetsPool(buyerRelicId), RelicNotFromMaBeetsPool());
-        // Verify the buyer's relic is not fully matured
-        require(!_isRelicMaxMaturity(buyerRelicId), BuyerRelicFullyMatured());
         // Verify the buyer's relic is large enough
         require(_isRelicLargeEnough(buyerRelicId), RelicTooSmall());
+
+        // harvest both relics to clear any pending rewards that could get mixed up during the merge/split.
+        // Additionally, by calling harvest, we ensure that both relics are up to date, since it calls _updatePosition internally.
+        reliquary.harvest(sellerRelicId, offer.seller);
+        reliquary.harvest(buyerRelicId, msg.sender);
+
+        // Verify the seller's relic is still fully matured
+        require(_isRelicMaxMaturity(sellerRelicId), RelicNotFullyMatured());
+        require(!_isRelicMaxMaturity(buyerRelicId), RelicFullyMatured());
 
         // save the state of the positions before the operation
         PositionInfo memory sellerPosition = reliquary.getPositionForId(sellerRelicId);
@@ -236,8 +245,11 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         uint256 sellerFeeAmount;
         uint256 protocolFeeAmount;
 
+        // Verify the boost to level is greater than the buyer's relic level
+        require(boostToLevel > buyerPosition.level, BoostToLevelTooLow());
+
         // execute the operation state changes
-        (newBuyerRelicId, sellerFeeAmount, protocolFeeAmount) = _acceptOffer(sellerRelicId, buyerRelicId);
+        (newBuyerRelicId, sellerFeeAmount, protocolFeeAmount) = _acceptOffer(sellerRelicId, buyerRelicId, boostToLevel);
 
         // While not strictly necessary, we enforce post operation invariant checks
         // As a means for communicating the expected outcome of the operation
@@ -250,9 +262,9 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         // Verify the buyer owns the new relic
         require(_isRelicOwnedBy(newBuyerRelicId, msg.sender), NotRelicOwner());
 
-        // Verify both relics are at max maturity after the offer is accepted
+        // Verify the seller's relic is at max maturity after the offer is accepted
         require(_isRelicMaxMaturity(sellerRelicId), RelicNotFullyMatureAfterSplit());
-        require(_isRelicMaxMaturity(newBuyerRelicId), RelicNotFullyMatureAfterSplit());
+        // TODO: add buyer level check
 
         // The amount of the seller's relic should never decrease
         require(sellerPositionAfter.amount == sellerPosition.amount + sellerFeeAmount, SellerAmountInvariantCheck());
@@ -283,31 +295,69 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
         );
     }
 
-    function _acceptOffer(uint256 sellerRelicId, uint256 buyerRelicId)
+    function _acceptOffer(uint256 sellerRelicId, uint256 buyerRelicId, uint256 boostToLevel)
         internal
         returns (uint256 newBuyerRelicId, uint256 sellerFeeAmount, uint256 protocolFeeAmount)
     {
         Offer storage offer = _offers[sellerRelicId];
         PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
+        PositionInfo memory sellerPosition = reliquary.getPositionForId(sellerRelicId);
+
+        // This is the exact amount needed to boost the buyer's relic to the desired level given the seller's relic entry
+        uint256 tempRelicAmount = _calculateSplitAmountForDesiredLevelBoost(sellerPosition, buyerPosition, boostToLevel);
+
+        // If the amount is greater than the seller's relic size, the buyer's relic is too large to be boosted given the
+        // corresponding entries of each relic.
+        require(tempRelicAmount <= sellerPosition.amount, BuyerRelicTooLargeToBeBoosted());
 
         // Calculate the fee amounts
-        uint256 feeBips = (maBeetsMaxMaturityLevel - buyerPosition.level) * offer.feePerLevelBips;
+        uint256 feeBips = (boostToLevel - buyerPosition.level) * offer.feePerLevelBips;
         uint256 totalFeeAmount = (buyerPosition.amount * feeBips) / BIPS_DENOMINATOR;
         protocolFeeAmount = (totalFeeAmount * protocolFeeBips) / BIPS_DENOMINATOR;
         sellerFeeAmount = totalFeeAmount - protocolFeeAmount;
 
-        // Merge the relics (this will combine both into sellerRelicId)
-        reliquary.merge(buyerRelicId, sellerRelicId);
+        // We create a temporary relic that holds the amount needed to boost the buyer's relic to the desired level
+        uint256 tempRelicId = reliquary.split(sellerRelicId, tempRelicAmount, address(this));
 
-        // This transfers the new relic directly to the buyer
-        // We leave the protocol fee amount in the seller's relic and process it below
-        newBuyerRelicId = reliquary.split(sellerRelicId, buyerPosition.amount - totalFeeAmount, msg.sender);
+        // Merge the buyer's relic into the temporary relic
+        reliquary.merge(buyerRelicId, tempRelicId);
+
+        // Create the new buyer's relic, leaving the protocol fee amount in the temporary relic
+        newBuyerRelicId = reliquary.split(tempRelicId, buyerPosition.amount - totalFeeAmount, msg.sender);
+
+        // Merge the temporary relic back into the seller's relic, this burns the temporary relic
+        reliquary.merge(tempRelicId, sellerRelicId);
 
         if (protocolFeeAmount > 0) {
             // Reliquary's withdraw function will send the tokens to msg.sender (this contract)
             reliquary.withdraw(protocolFeeAmount, sellerRelicId);
             maBeetsPoolToken.safeTransfer(protocolFeeRecipient, protocolFeeAmount);
         }
+    }
+
+    function _calculateSplitAmountForDesiredLevelBoost(
+        PositionInfo memory sellerPosition,
+        PositionInfo memory buyerPosition,
+        uint256 boostToLevel
+    ) internal view returns (uint256) {
+        LevelInfo memory levelInfo = reliquary.getLevelInfo(maBeetsPoolId);
+
+        // During the merge operation, the new entry is calculated as follows:
+        // newEntry = (fromAmount * fromPosition.entry + toAmount * toPosition.entry) / (fromAmount + toAmount);
+
+        // In our case, the newEntry is known, it is the entry required to reach the desired maturity level
+        // we refer to it as desiredEntry:
+        uint256 desiredEntry = block.timestamp - levelInfo.requiredMaturities[boostToLevel];
+
+        // Additionally, we are merging FROM the buyer's relic TO a temporary relic, with the temporary relic having
+        // the same entry as the seller's relic.
+
+        // As such, we can solve the above equation for the toAmount as follows:
+        // toAmount = fromAmount * (fromPosition.entry - desiredEntry) / (desiredEntry - sellerPosition.entry)
+        // where toAmount is the size of the temoporary relic needed to mature the buyer's relic to the desired level,
+        // given the seller's entry
+        return buyerPosition.amount
+            * ((buyerPosition.entry - desiredEntry) * 1e18 / (desiredEntry - sellerPosition.entry)) / 1e18;
     }
 
     /**
@@ -583,5 +633,18 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard {
 
         // Increment the num accepted offers for the seller's relic
         _relicNumAcceptedOffers[sellerRelicId]++;
+    }
+
+    /**
+     * @notice Implements the IERC721Receiver interface to accept ERC721 transfers
+     * @dev This function is called by the ERC721 contract when a token is transferred to this contract
+     * @return bytes4 The function selector to confirm this contract accepts the token
+     */
+    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data)
+        external
+        override
+        returns (bytes4)
+    {
+        return this.onERC721Received.selector;
     }
 }
