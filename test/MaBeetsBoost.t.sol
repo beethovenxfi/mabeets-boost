@@ -1187,4 +1187,101 @@ contract MaBeetsBoostUnitTest is Test {
         maBeetsBoost.acceptOffer(sellerRelicId, smallBuyerRelicId, MAX_MATURED_LEVEL);
         vm.stopPrank();
     }
+
+    // Test the canRelicBeBoosted function with a boostable relic
+    function testCanRelicBeBoosted() public {
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Test if the buyer's relic can be boosted to max level
+        bool canBoost = maBeetsBoost.canRelicBeBoosted(sellerRelicId, buyerRelicId, MAX_MATURED_LEVEL);
+        assertTrue(canBoost, "Buyer's relic should be boostable to max level");
+    }
+
+    // Test the canRelicBeBoosted function with a relic that can't be boosted
+    function testCanRelicBeBoostedFalse() public {
+        // Create a very large buyer relic that would require more tokens from the seller than available
+        uint256 largeBuyerRelicId = _createRelic(buyer, 2000 ether); // Much larger than seller's relic
+
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Test if the large buyer relic can be boosted to max level
+        bool canBoost = maBeetsBoost.canRelicBeBoosted(sellerRelicId, largeBuyerRelicId, MAX_MATURED_LEVEL);
+        assertFalse(canBoost, "Large buyer relic should not be boostable");
+    }
+
+    // Test the canRelicBeBoosted function with different boost levels
+    function testCanRelicBeBoostedPartialLevels() public {
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Get the current level of the buyer's relic
+        PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
+        uint256 currentLevel = buyerPosition.level;
+
+        // Test boosting just one level higher
+        uint256 oneHigherLevel = currentLevel + 1;
+        bool canBoostOneLevel = maBeetsBoost.canRelicBeBoosted(sellerRelicId, buyerRelicId, oneHigherLevel);
+        assertTrue(canBoostOneLevel, "Buyer's relic should be boostable to one level higher");
+
+        // Test boosting to a middle level
+        LevelInfo memory levelInfo = reliquary.getLevelInfo(MABEETS_POOL_ID);
+        uint256 middleLevel = (currentLevel + levelInfo.requiredMaturities.length - 1) / 2;
+        bool canBoostMiddleLevel = maBeetsBoost.canRelicBeBoosted(sellerRelicId, buyerRelicId, middleLevel);
+        assertTrue(canBoostMiddleLevel, "Buyer's relic should be boostable to middle level");
+    }
+
+    // Test the canRelicBeBoosted function with a level that's too low
+    function testCanRelicBeBoostedTooLowLevel() public {
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Get the current level of the buyer's relic
+        PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
+        uint256 currentLevel = buyerPosition.level;
+
+        // Test boosting to the same level (which is technically not a boost)
+        bool canBoostSameLevel = maBeetsBoost.canRelicBeBoosted(sellerRelicId, buyerRelicId, currentLevel);
+
+        assertFalse(canBoostSameLevel, "canRelicBeBoosted should return false for same level");
+    }
+
+    function testCanRelicBeBoostedMaxBoost() public {
+        uint256 relicWithNoMaturity = _createRelic(buyer, 10 ether);
+
+        bool canBoost = maBeetsBoost.canRelicBeBoosted(sellerRelicId, relicWithNoMaturity, MAX_MATURED_LEVEL);
+        assertTrue(canBoost, "Small buyer relic should be boostable by large seller relic");
+    }
+
+    function testCanRelicBeBoostedNonExistentRelic() public {
+        uint256 nonExistentRelicId = 9999; // Assuming this ID doesn't exist
+
+        // This should revert when trying to get position info for a non-existent relic
+        vm.expectRevert();
+        maBeetsBoost.canRelicBeBoosted(sellerRelicId, nonExistentRelicId, MAX_MATURED_LEVEL);
+    }
+
+    // Test accepting an offer with a buyer relic that's too large to be boosted
+    function testAcceptOfferBuyerRelicTooLargeToBeBoosted() public {
+        // Create a relatively small seller relic
+        uint256 smallSellerRelicId = _createRelic(seller, 50 ether);
+
+        // Make it fully matured
+        vm.warp(block.timestamp + timeForMaxMaturity);
+        reliquary.updatePosition(smallSellerRelicId);
+
+        // Create an offer for the small seller relic
+        vm.prank(seller);
+        maBeetsBoost.createOffer(smallSellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        // Create a very large buyer relic
+        uint256 largeBuyerRelicId = _createRelic(buyer, 1000 ether); // Much larger than seller's relic
+
+        // Try to accept the offer
+        vm.startPrank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.BuyerRelicTooLargeToBeBoosted.selector));
+        maBeetsBoost.acceptOffer(smallSellerRelicId, largeBuyerRelicId, MAX_MATURED_LEVEL);
+        vm.stopPrank();
+    }
 }

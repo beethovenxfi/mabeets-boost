@@ -137,6 +137,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
     error BoostToLevelTooLow();
     error BuyerRelicTooLargeToBeBoosted();
     error RelicFullyMatured();
+    error BuyerRelicNotBoostedToDesiredLevel();
 
     constructor(
         address _reliquary,
@@ -251,9 +252,8 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         // execute the operation state changes
         (newBuyerRelicId, sellerFeeAmount, protocolFeeAmount) = _acceptOffer(sellerRelicId, buyerRelicId, boostToLevel);
 
-        // While not strictly necessary, we enforce post operation invariant checks
-        // As a means for communicating the expected outcome of the operation
-        // An offer may only be accepted if the following conditions are met
+        // While not strictly necessary, we enforce post operation invariant checks as a means for communicating the expected
+        // outcome of the operation. An offer may only be accepted if the following conditions are met
         PositionInfo memory sellerPositionAfter = reliquary.getPositionForId(sellerRelicId);
         PositionInfo memory newBuyerPosition = reliquary.getPositionForId(newBuyerRelicId);
 
@@ -264,7 +264,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
 
         // Verify the seller's relic is at max maturity after the offer is accepted
         require(_isRelicMaxMaturity(sellerRelicId), RelicNotFullyMatureAfterSplit());
-        // TODO: add buyer level check
+        require(newBuyerPosition.level == boostToLevel, BuyerRelicNotBoostedToDesiredLevel());
 
         // The amount of the seller's relic should never decrease
         require(sellerPositionAfter.amount == sellerPosition.amount + sellerFeeAmount, SellerAmountInvariantCheck());
@@ -358,6 +358,36 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         // given the seller's entry
         return buyerPosition.amount
             * ((buyerPosition.entry - desiredEntry) * 1e18 / (desiredEntry - sellerPosition.entry)) / 1e18;
+    }
+
+    /**
+     * @notice Checks if a buyer relic can be boosted to a given level
+     * @param sellerRelicId The ID of the seller's relic
+     * @param buyerRelicId The ID of the buyer's relic
+     * @param boostToLevel The level to boost the buyer's relic to
+     * @return canBoost True if the buyer relic can be boosted to the given level, false otherwise
+     * @dev Since this is a view function, it cannot call updatePosition on the relics, so a return value of true does not
+     * guarantee that the buyer relic can be boosted to the given level if the relics are not up to date.
+     */
+    function canRelicBeBoosted(uint256 sellerRelicId, uint256 buyerRelicId, uint256 boostToLevel)
+        external
+        view
+        returns (bool)
+    {
+        PositionInfo memory sellerPosition = reliquary.getPositionForId(sellerRelicId);
+        PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
+
+        if (sellerPosition.level != maBeetsMaxMaturityLevel) {
+            return false;
+        }
+
+        if (buyerPosition.level >= boostToLevel) {
+            return false;
+        }
+
+        uint256 splitAmount = _calculateSplitAmountForDesiredLevelBoost(sellerPosition, buyerPosition, boostToLevel);
+
+        return splitAmount <= sellerPosition.amount;
     }
 
     /**
