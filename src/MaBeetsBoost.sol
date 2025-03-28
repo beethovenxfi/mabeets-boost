@@ -7,7 +7,6 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
-import {console} from "forge-std/console.sol";
 
 /**
  * @title MaBeetsBoost
@@ -98,13 +97,16 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
     mapping(uint256 relicId => uint256 acceptedOffersCount) private _relicNumAcceptedOffers;
 
     // Events
-    event OfferCreated(address indexed seller, uint256 relicId, uint256 offerIdx, uint256 feePerLevelBips);
-    event OfferCancelled(address indexed seller, uint256 relicId, uint256 offerIdx);
+    event OfferCreated(
+        address indexed seller, uint256 indexed relicId, uint256 indexed offerIdx, uint256 feePerLevelBips
+    );
+    event OfferCancelled(address indexed seller, uint256 indexed relicId, uint256 indexed offerIdx);
     event OfferAccepted(
         address indexed seller,
         address indexed buyer,
-        uint256 sellerRelicId,
+        uint256 indexed sellerRelicId,
         uint256 buyerRelicId,
+        uint256 newBuyerRelicId,
         uint256 offerIdx,
         uint256 sellerFeeAmount,
         uint256 protocolFeeAmount
@@ -291,7 +293,14 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         // The offer stays active until the seller cancels it, it will continue to accrue excess maturity
 
         emit OfferAccepted(
-            seller, msg.sender, sellerRelicId, newBuyerRelicId, offer.idx, sellerFeeAmount, protocolFeeAmount
+            seller,
+            msg.sender,
+            sellerRelicId,
+            buyerRelicId,
+            newBuyerRelicId,
+            offer.idx,
+            sellerFeeAmount,
+            protocolFeeAmount
         );
     }
 
