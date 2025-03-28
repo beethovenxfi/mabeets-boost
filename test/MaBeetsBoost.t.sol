@@ -1284,4 +1284,39 @@ contract MaBeetsBoostUnitTest is Test {
         maBeetsBoost.acceptOffer(smallSellerRelicId, largeBuyerRelicId, MAX_MATURED_LEVEL);
         vm.stopPrank();
     }
+
+    function testAcceptOfferPartialBoost() public {
+        LevelInfo memory levelInfo = reliquary.getLevelInfo(MABEETS_POOL_ID);
+
+        vm.prank(seller);
+        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+
+        uint256 relicId = _createRelic(buyer, 100 ether);
+
+        vm.warp(block.timestamp + levelInfo.requiredMaturities[1]);
+        reliquary.updatePosition(relicId);
+
+        vm.prank(buyer);
+        maBeetsBoost.acceptOffer(sellerRelicId, relicId, 2);
+
+        vm.warp(block.timestamp + timeForMaxMaturity);
+        reliquary.updatePosition(sellerRelicId);
+
+        relicId = _createRelic(buyer, 100 ether);
+        vm.warp(block.timestamp + levelInfo.requiredMaturities[5]);
+        reliquary.updatePosition(relicId);
+
+        vm.prank(buyer);
+        maBeetsBoost.acceptOffer(sellerRelicId, relicId, 8);
+
+        vm.warp(block.timestamp + timeForMaxMaturity);
+        reliquary.updatePosition(sellerRelicId);
+
+        relicId = _createRelic(buyer, 100 ether);
+        vm.warp(block.timestamp + levelInfo.requiredMaturities[2]);
+        reliquary.updatePosition(relicId);
+
+        vm.prank(buyer);
+        maBeetsBoost.acceptOffer(sellerRelicId, relicId, 9);
+    }
 }

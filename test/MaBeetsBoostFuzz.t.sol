@@ -136,7 +136,8 @@ contract MaBeetsBoostFuzzTest is Test {
         uint256 feePerLevelBips,
         uint256 protocolFeeBips,
         uint256 sellerRelicMaturity,
-        uint256 buyerRelicMaturity
+        uint256 buyerRelicMaturity,
+        uint256 boostToLevel
     ) public {
         feePerLevelBips =
             bound(feePerLevelBips, maBeetsBoost.MIN_FEE_PER_LEVEL_BIPS(), maBeetsBoost.MAX_FEE_PER_LEVEL_BIPS());
@@ -169,15 +170,16 @@ contract MaBeetsBoostFuzzTest is Test {
         PositionInfo memory sellerPositionBefore = reliquary.getPositionForId(sellerRelicId);
         uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
 
-        uint256 levelDifference = sellerPositionBefore.level - buyerPositionBefore.level;
-        uint256 feeBips = feePerLevelBips * levelDifference;
+        boostToLevel = bound(boostToLevel, buyerPositionBefore.level + 1, MAX_MATURED_LEVEL);
+
+        uint256 feeBips = feePerLevelBips * (boostToLevel - buyerPositionBefore.level);
         uint256 expectedTotalFeeAmount = (buyerPositionBefore.amount * feeBips) / maBeetsBoost.BIPS_DENOMINATOR();
         uint256 expectedProtocolFeeAmount = (expectedTotalFeeAmount * protocolFeeBips) / maBeetsBoost.BIPS_DENOMINATOR();
         uint256 expectedSellerFeeAmount = expectedTotalFeeAmount - expectedProtocolFeeAmount;
         uint256 expectedBuyerRelicAmount = buyerPositionBefore.amount - expectedTotalFeeAmount;
 
         vm.prank(buyer);
-        uint256 newBuyerRelicId = maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId, MAX_MATURED_LEVEL);
+        uint256 newBuyerRelicId = maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId, boostToLevel);
         vm.stopPrank();
 
         // Verify the relics are owned by the correct addresses
