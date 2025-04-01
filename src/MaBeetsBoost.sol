@@ -353,6 +353,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
 
         // During the merge operation, the new entry is calculated as follows:
         // newEntry = (fromAmount * fromPosition.entry + toAmount * toPosition.entry) / (fromAmount + toAmount);
+        // refernce: https://github.com/beethovenxfi/Reliquary/blob/dd4c51515203ecd724259062b5f3fdeb8a9d99ba/contracts/Reliquary.sol#L522
 
         // In our case, the newEntry is known, it is the entry required to reach the desired maturity level
         // we refer to it as desiredEntry:
