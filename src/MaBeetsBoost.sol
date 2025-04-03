@@ -20,7 +20,6 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         uint256 idx;
         address seller;
         uint256 relicId;
-        uint256 feePerLevelBips; // Fee per level in basis points
         bool active;
     }
 
@@ -29,7 +28,6 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         uint256 idx;
         address seller;
         uint256 relicId;
-        uint256 feePerLevelBips;
         bool active;
         bool isOrphan;
         uint256 excessMaturity;
@@ -59,11 +57,13 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
 
     uint256 public constant MIN_FEE_PER_LEVEL_BIPS = 10; // 0.1%
     uint256 public constant MAX_FEE_PER_LEVEL_BIPS = 100; // 1%
-    uint256 public constant MAX_PROTOCOL_FEE_BIPS = 5_000; // 50%
+    uint256 public constant MAX_PROTOCOL_FEE_BIPS = 10_000; // 100%
     uint256 public constant BIPS_DENOMINATOR = 10_000;
     // We set a minimum relic size to prevent any potential issues with rounding for very small relics
     uint256 public constant MIN_RELIC_SIZE = 1e18;
 
+    // The fee per level in basis points
+    uint256 public feePerLevelBips;
     // The protocol fee percentage in basis points
     uint256 public protocolFeeBips;
     // The address that receives the protocol fee
@@ -97,9 +97,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
     mapping(uint256 relicId => uint256 acceptedOffersCount) private _relicNumAcceptedOffers;
 
     // Events
-    event OfferCreated(
-        address indexed seller, uint256 indexed relicId, uint256 indexed offerIdx, uint256 feePerLevelBips
-    );
+    event OfferCreated(address indexed seller, uint256 indexed relicId, uint256 indexed offerIdx);
     event OfferCancelled(address indexed seller, uint256 indexed relicId, uint256 indexed offerIdx);
     event OfferAccepted(
         address indexed seller,
@@ -111,6 +109,9 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         uint256 sellerFeeAmount,
         uint256 protocolFeeAmount
     );
+    event FeePerLevelBipsSet(uint256 newFeePerLevelBips);
+    event ProtocolFeeBipsSet(uint256 newProtocolFeeBips);
+    event ProtocolFeeRecipientSet(address newProtocolFeeRecipient);
 
     // Errors
     error RelicNotFullyMatured();
@@ -146,7 +147,8 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         address _owner,
         uint256 _protocolFeeBips,
         address _protocolFeeRecipient,
-        uint256 _maBeetsPoolId
+        uint256 _maBeetsPoolId,
+        uint256 _feePerLevelBips
     ) Ownable(_owner) {
         reliquary = IReliquary(_reliquary);
         maBeetsPoolId = _maBeetsPoolId;
@@ -158,21 +160,17 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
 
         _setProtocolFeeBips(_protocolFeeBips);
         _setProtocolFeeRecipient(_protocolFeeRecipient);
+        _setFeePerLevelBips(_feePerLevelBips);
     }
 
     /**
      * @notice Creates an offer to sell excess maturity
      * @param relicId The ID of the seller's fully matured relic
-     * @param feePerLevelBips The fee per level in basis points to charge for the boost
      * @return offerId The ID of the created offer
      */
-    function createOffer(uint256 relicId, uint256 feePerLevelBips) external nonReentrant returns (uint256) {
+    function createOffer(uint256 relicId) external nonReentrant returns (uint256) {
         // Check if there's already an active offer for this relic
         require(!_isOfferActive(relicId), OfferAlreadyActive());
-
-        // Verify the fee is within the allowed range
-        require(feePerLevelBips <= MAX_FEE_PER_LEVEL_BIPS, FeeTooHigh());
-        require(feePerLevelBips >= MIN_FEE_PER_LEVEL_BIPS, FeeTooLow());
 
         // Verify the user owns the relic
         require(_isRelicOwnedBy(relicId, msg.sender), NotRelicOwner());
@@ -187,15 +185,14 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
 
         uint256 offerIdx = _nextOfferIdx;
 
-        _offers[relicId] =
-            Offer({idx: offerIdx, seller: msg.sender, relicId: relicId, feePerLevelBips: feePerLevelBips, active: true});
+        _offers[relicId] = Offer({idx: offerIdx, seller: msg.sender, relicId: relicId, active: true});
 
         _offerRelicIds[offerIdx] = relicId;
 
         // Increment the next offer idx
         _nextOfferIdx++;
 
-        emit OfferCreated(msg.sender, relicId, offerIdx, feePerLevelBips);
+        emit OfferCreated(msg.sender, relicId, offerIdx);
 
         return offerIdx;
     }
@@ -320,7 +317,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         require(tempRelicAmount <= sellerPosition.amount, BuyerRelicTooLargeToBeBoosted());
 
         // Calculate the fee amounts
-        uint256 feeBips = (boostToLevel - buyerPosition.level) * offer.feePerLevelBips;
+        uint256 feeBips = (boostToLevel - buyerPosition.level) * feePerLevelBips;
         uint256 totalFeeAmount = (buyerPosition.amount * feeBips) / BIPS_DENOMINATOR;
         protocolFeeAmount = (totalFeeAmount * protocolFeeBips) / BIPS_DENOMINATOR;
         sellerFeeAmount = totalFeeAmount - protocolFeeAmount;
@@ -448,7 +445,6 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
             idx: _offers[relicId].idx,
             seller: _offers[relicId].seller,
             relicId: _offers[relicId].relicId,
-            feePerLevelBips: _offers[relicId].feePerLevelBips,
             active: _offers[relicId].active,
             isOrphan: _isOrphanOffer(relicId),
             excessMaturity: excessMaturity,
@@ -562,6 +558,18 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         return _userAcceptedOfferRecordCount[user];
     }
 
+    function setFeePerLevelBips(uint256 newFeePerLevelBips) external onlyOwner {
+        _setFeePerLevelBips(newFeePerLevelBips);
+    }
+
+    function _setFeePerLevelBips(uint256 newFeePerLevelBips) internal {
+        require(newFeePerLevelBips <= MAX_FEE_PER_LEVEL_BIPS, FeeTooHigh());
+        require(newFeePerLevelBips >= MIN_FEE_PER_LEVEL_BIPS, FeeTooLow());
+
+        feePerLevelBips = newFeePerLevelBips;
+        emit FeePerLevelBipsSet(newFeePerLevelBips);
+    }
+
     function setProtocolFeeBips(uint256 newProtocolFeeBips) external onlyOwner {
         _setProtocolFeeBips(newProtocolFeeBips);
     }
@@ -570,6 +578,8 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         require(newProtocolFeeBips <= MAX_PROTOCOL_FEE_BIPS, ProtocolFeeTooHigh());
 
         protocolFeeBips = newProtocolFeeBips;
+
+        emit ProtocolFeeBipsSet(newProtocolFeeBips);
     }
 
     function setProtocolFeeRecipient(address newProtocolFeeRecipient) external onlyOwner {
@@ -580,6 +590,8 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         require(newProtocolFeeRecipient != address(0), NoAddressZero());
 
         protocolFeeRecipient = newProtocolFeeRecipient;
+
+        emit ProtocolFeeRecipientSet(newProtocolFeeRecipient);
     }
 
     function _isApprovedToOperateOnRelic(uint256 relicId) internal view returns (bool) {
@@ -649,7 +661,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
             newBuyerRelicId: newBuyerRelicId,
             seller: offer.seller,
             sellerRelicId: sellerRelicId,
-            feePerLevelBips: offer.feePerLevelBips,
+            feePerLevelBips: feePerLevelBips,
             amount: newBuyerPosition.amount + sellerFeeAmount + protocolFeeAmount,
             amountAfterFee: newBuyerPosition.amount,
             sellerFeeAmount: sellerFeeAmount,
@@ -680,7 +692,7 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
      * @dev This function is called by the ERC721 contract when a token is transferred to this contract
      * @return bytes4 The function selector to confirm this contract accepts the token
      */
-    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data)
+    function onERC721Received(address _operator, address _from, uint256 _tokenId, bytes calldata _data)
         external
         override
         returns (bytes4)

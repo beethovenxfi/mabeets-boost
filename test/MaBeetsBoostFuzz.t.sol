@@ -78,7 +78,7 @@ contract MaBeetsBoostFuzzTest is Test {
 
         stS.deposit{value: BIG_NUMBER - 1 ether}();
 
-        maBeetsBoost = new MaBeetsBoost(address(reliquary), owner, 0, feeRecipient, MABEETS_POOL_ID);
+        maBeetsBoost = new MaBeetsBoost(address(reliquary), owner, 0, feeRecipient, MABEETS_POOL_ID, 10);
 
         address[] memory assets = new address[](2);
         assets[0] = address(BEETS_ADDRESS);
@@ -150,8 +150,9 @@ contract MaBeetsBoostFuzzTest is Test {
         // Assuming 10 weeks to max maturity, 10 weeks * 1,000,000 = 10,000,000 weeks = 192,307 years
         sellerRelicMaturity = bound(sellerRelicMaturity, timeForMaxMaturity * 2, timeForMaxMaturity * 1_000_000);
 
-        vm.prank(owner);
+        vm.startPrank(owner);
         maBeetsBoost.setProtocolFeeBips(protocolFeeBips);
+        maBeetsBoost.setFeePerLevelBips(feePerLevelBips);
         vm.stopPrank();
 
         uint256 sellerRelicId = _createRelic(seller, sellerRelicSize);
@@ -163,7 +164,7 @@ contract MaBeetsBoostFuzzTest is Test {
         reliquary.updatePosition(buyerRelicId);
 
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, feePerLevelBips);
+        maBeetsBoost.createOffer(sellerRelicId);
         vm.stopPrank();
 
         PositionInfo memory buyerPositionBefore = reliquary.getPositionForId(buyerRelicId);

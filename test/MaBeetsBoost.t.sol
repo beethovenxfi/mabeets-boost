@@ -55,7 +55,9 @@ contract MaBeetsBoostUnitTest is Test {
 
         // Deploy MaBeetsBoost contract
         vm.startPrank(owner);
-        maBeetsBoost = new MaBeetsBoost(address(reliquary), owner, PROTOCOL_FEE_BIPS, feeRecipient, MABEETS_POOL_ID);
+        maBeetsBoost = new MaBeetsBoost(
+            address(reliquary), owner, PROTOCOL_FEE_BIPS, feeRecipient, MABEETS_POOL_ID, FEE_PER_LEVEL_BIPS
+        );
         vm.stopPrank();
 
         // Get the time for max maturity
@@ -138,7 +140,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testCreateOffer() public {
         // Create offer
         vm.startPrank(seller);
-        uint256 offerIdx = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerIdx = maBeetsBoost.createOffer(sellerRelicId);
         vm.stopPrank();
 
         // Get the offer
@@ -148,32 +150,12 @@ contract MaBeetsBoostUnitTest is Test {
         assertEq(offer.idx, offerIdx);
         assertEq(offer.seller, seller);
         assertEq(offer.relicId, sellerRelicId);
-        assertEq(offer.feePerLevelBips, FEE_PER_LEVEL_BIPS);
         assertTrue(offer.active);
-    }
-
-    // Test fee validation in createOffer
-    function testCreateOfferFeeTooHigh() public {
-        uint256 feeTooHigh = maBeetsBoost.MAX_FEE_PER_LEVEL_BIPS() + 1;
-
-        vm.startPrank(seller);
-        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.FeeTooHigh.selector));
-        maBeetsBoost.createOffer(sellerRelicId, feeTooHigh);
-        vm.stopPrank();
-    }
-
-    function testCreateOfferFeeTooLow() public {
-        uint256 feeTooLow = maBeetsBoost.MIN_FEE_PER_LEVEL_BIPS() - 1;
-
-        vm.startPrank(seller);
-        vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.FeeTooLow.selector));
-        maBeetsBoost.createOffer(sellerRelicId, feeTooLow);
-        vm.stopPrank();
     }
 
     function testCancelOffer() public {
         vm.startPrank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId);
 
         // Cancel offer
         maBeetsBoost.cancelOffer(sellerRelicId);
@@ -185,7 +167,7 @@ contract MaBeetsBoostUnitTest is Test {
 
     function testUnauthorizedCancelOffer() public {
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Try to cancel as non-owner
         vm.startPrank(buyer);
@@ -196,7 +178,7 @@ contract MaBeetsBoostUnitTest is Test {
 
     function testCancelOrphanOfferWithoutApproval() public {
         vm.prank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId);
 
         assertTrue(maBeetsBoost.getOffer(sellerRelicId).active);
 
@@ -214,7 +196,7 @@ contract MaBeetsBoostUnitTest is Test {
 
     function testCancelOrphanOfferOwnerChanged() public {
         vm.prank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId);
 
         assertTrue(maBeetsBoost.getOffer(sellerRelicId).active);
 
@@ -232,7 +214,7 @@ contract MaBeetsBoostUnitTest is Test {
 
     function testCancelOrphanRelicTooSmall() public {
         vm.prank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId);
 
         assertTrue(maBeetsBoost.getOffer(sellerRelicId).active);
 
@@ -252,7 +234,7 @@ contract MaBeetsBoostUnitTest is Test {
 
     function testCancelOrphanRelicNotMatured() public {
         vm.startPrank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId);
 
         assertTrue(maBeetsBoost.getOffer(sellerRelicId).active);
 
@@ -280,7 +262,7 @@ contract MaBeetsBoostUnitTest is Test {
         uint256 relicId = reliquary.tokenOfOwnerByIndex(seller, 0);
 
         vm.prank(seller);
-        maBeetsBoost.createOffer(relicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(relicId);
 
         // Try to cancel as orphan when it's not orphaned
         vm.startPrank(buyer);
@@ -289,9 +271,9 @@ contract MaBeetsBoostUnitTest is Test {
         vm.stopPrank();
     }
 
-    function testAcceptOfferAbc() public {
+    function testAcceptOffer() public {
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Record initial balances and states
         PositionInfo memory buyerPositionBefore = reliquary.getPositionForId(buyerRelicId);
@@ -326,7 +308,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testAcceptOfferWithFullyMaturedBuyerRelic() public {
         // Create offer
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Create a fully matured relic for buyer
         vm.startPrank(buyer);
@@ -354,7 +336,7 @@ contract MaBeetsBoostUnitTest is Test {
         assertEq(maBeetsBoost.protocolFeeBips(), newProtocolFee);
 
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
 
@@ -387,7 +369,7 @@ contract MaBeetsBoostUnitTest is Test {
         // Test fees go to new recipient
 
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         uint256 initialFeeRecipientBalance = lpToken.balanceOf(newFeeRecipient);
 
@@ -406,7 +388,7 @@ contract MaBeetsBoostUnitTest is Test {
         maBeetsBoost.setProtocolFeeBips(0);
 
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
 
@@ -437,14 +419,13 @@ contract MaBeetsBoostUnitTest is Test {
 
     function testGetOffer() public {
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         PositionInfo memory position = reliquary.getPositionForId(sellerRelicId);
         MaBeetsBoost.OfferWithMetadata memory offerMeta = maBeetsBoost.getOffer(sellerRelicId);
 
         assertEq(offerMeta.seller, seller);
         assertEq(offerMeta.relicId, sellerRelicId);
-        assertEq(offerMeta.feePerLevelBips, FEE_PER_LEVEL_BIPS);
         assertTrue(offerMeta.active);
         assertFalse(offerMeta.isOrphan);
         assertEq(offerMeta.relicSize, position.amount);
@@ -455,7 +436,7 @@ contract MaBeetsBoostUnitTest is Test {
 
     function testGetOfferByIdx() public {
         vm.prank(seller);
-        uint256 offerIdx = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerIdx = maBeetsBoost.createOffer(sellerRelicId);
 
         MaBeetsBoost.OfferWithMetadata memory offer = maBeetsBoost.getOfferByIdx(offerIdx);
 
@@ -469,11 +450,11 @@ contract MaBeetsBoostUnitTest is Test {
         // Create several offers
         // Setup seller 1 (existing)
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Setup seller 2 (user1)
         vm.prank(user1);
-        maBeetsBoost.createOffer(user1RelicId, FEE_PER_LEVEL_BIPS + 10); // Different fee
+        maBeetsBoost.createOffer(user1RelicId);
 
         // Test getOffers with pagination
         MaBeetsBoost.OfferWithMetadata[] memory offers = maBeetsBoost.getOffers(0, 1, false);
@@ -493,7 +474,7 @@ contract MaBeetsBoostUnitTest is Test {
 
     function testMultipleOfferAcceptances() public {
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // First buyer accepts
         vm.prank(buyer);
@@ -527,7 +508,7 @@ contract MaBeetsBoostUnitTest is Test {
         reliquary.updatePosition(sellerRelicId);
 
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         PositionInfo memory user2Position = reliquary.getPositionForId(relicId);
 
@@ -563,7 +544,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testGetAcceptedOfferRecords() public {
         // Create an offer from seller
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId, MAX_MATURED_LEVEL);
@@ -596,13 +577,13 @@ contract MaBeetsBoostUnitTest is Test {
     function testGetAcceptedOfferRecordsPagination() public {
         // Create and accept multiple offers
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId, MAX_MATURED_LEVEL);
 
         vm.prank(seller2);
-        maBeetsBoost.createOffer(seller2RelicId, FEE_PER_LEVEL_BIPS + 10);
+        maBeetsBoost.createOffer(seller2RelicId);
 
         vm.prank(user2);
         maBeetsBoost.acceptOffer(seller2RelicId, user2RelicId, MAX_MATURED_LEVEL);
@@ -628,13 +609,13 @@ contract MaBeetsBoostUnitTest is Test {
     function testGetUserAcceptedOfferRecords() public {
         // Create and accept multiple offers
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId, MAX_MATURED_LEVEL);
 
         vm.prank(seller2);
-        maBeetsBoost.createOffer(seller2RelicId, FEE_PER_LEVEL_BIPS + 10);
+        maBeetsBoost.createOffer(seller2RelicId);
 
         vm.prank(user2);
         maBeetsBoost.acceptOffer(seller2RelicId, user2RelicId, MAX_MATURED_LEVEL);
@@ -670,7 +651,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testGetUserAcceptedOfferRecordsPaginationAndOrder() public {
         // Create first offer from seller
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Buyer accepts first offer
         vm.prank(buyer);
@@ -689,7 +670,7 @@ contract MaBeetsBoostUnitTest is Test {
 
         // Create second offer from seller
         vm.prank(seller);
-        maBeetsBoost.createOffer(secondSellerRelicId, FEE_PER_LEVEL_BIPS + 20);
+        maBeetsBoost.createOffer(secondSellerRelicId);
 
         // User2 accepts second offer
         vm.prank(user2);
@@ -716,7 +697,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testInvalidInputsForOfferRecords() public {
         // Create and accept an offer to have at least one record
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId, MAX_MATURED_LEVEL);
@@ -756,7 +737,7 @@ contract MaBeetsBoostUnitTest is Test {
         // Try to create an offer with a relic that's too small
         vm.startPrank(seller);
         vm.expectRevert(abi.encodeWithSelector(MaBeetsBoost.RelicTooSmall.selector));
-        maBeetsBoost.createOffer(smallRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(smallRelicId);
         vm.stopPrank();
     }
 
@@ -765,7 +746,7 @@ contract MaBeetsBoostUnitTest is Test {
         // Create an offer from seller
 
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Create a small relic for buyer
         uint256 smallAmount = maBeetsBoost.MIN_RELIC_SIZE() - 1;
@@ -794,7 +775,7 @@ contract MaBeetsBoostUnitTest is Test {
 
         // This should succeed
         vm.startPrank(seller);
-        uint256 offerIdx = maBeetsBoost.createOffer(exactMinRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerIdx = maBeetsBoost.createOffer(exactMinRelicId);
         vm.stopPrank();
 
         // Verify the offer was created successfully
@@ -814,57 +795,6 @@ contract MaBeetsBoostUnitTest is Test {
         maBeetsBoost.acceptOffer(exactMinRelicId, exactMinBuyerRelicId, MAX_MATURED_LEVEL);
     }
 
-    // Test accepting an offer at maximum fee per level allowed
-    function testAcceptOfferWithMaxFee() public {
-        // Create a new relic for the seller
-        uint256 maxFeeRelicId = _createFullyMatureRelic(seller, 100 ether);
-
-        // Create offer with maximum allowed fee
-        vm.startPrank(seller);
-        maBeetsBoost.createOffer(maxFeeRelicId, maBeetsBoost.MAX_FEE_PER_LEVEL_BIPS());
-        vm.stopPrank();
-        uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
-
-        uint256 newBuyerPartiallyMatureRelicId = _createPartiallyMatureRelic(buyer, 50 ether);
-
-        // Accept the offer
-        vm.startPrank(buyer);
-        uint256 newBuyerRelicId =
-            maBeetsBoost.acceptOffer(maxFeeRelicId, newBuyerPartiallyMatureRelicId, MAX_MATURED_LEVEL);
-        vm.stopPrank();
-        uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
-        // Verify higher fees were collected compared to standard fee test
-        uint256 feeCollected = finalFeeRecipientBalance - initialFeeRecipientBalance;
-        assertTrue(feeCollected > 0, "Protocol fee should have been collected");
-    }
-
-    // Test accepting an offer with minimum fee per level allowed
-    function testAcceptOfferWithMinFee() public {
-        // Create a new relic for the seller
-        uint256 minFeeRelicId = _createFullyMatureRelic(seller, 100 ether);
-
-        // Create offer with minimum allowed fee
-        vm.startPrank(seller);
-        maBeetsBoost.createOffer(minFeeRelicId, maBeetsBoost.MIN_FEE_PER_LEVEL_BIPS());
-        vm.stopPrank();
-
-        uint256 initialFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
-
-        uint256 newBuyerPartiallyMatureRelicId = _createPartiallyMatureRelic(buyer, 50 ether);
-
-        // Accept the offer
-        vm.startPrank(buyer);
-        uint256 newBuyerRelicId =
-            maBeetsBoost.acceptOffer(minFeeRelicId, newBuyerPartiallyMatureRelicId, MAX_MATURED_LEVEL);
-        vm.stopPrank();
-
-        uint256 finalFeeRecipientBalance = lpToken.balanceOf(feeRecipient);
-        uint256 feeCollected = finalFeeRecipientBalance - initialFeeRecipientBalance;
-
-        // Verify minimum fees were collected
-        assertTrue(feeCollected > 0, "Protocol fee should have been collected");
-    }
-
     // Test for seller accepting their own offer (valid but unusual case)
     function testSellerAcceptsOwnOffer() public {
         // Create a second relic for the seller with lower maturity
@@ -872,7 +802,7 @@ contract MaBeetsBoostUnitTest is Test {
 
         // Create offer with the fully matured relic
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Approve the second relic
         vm.prank(seller);
@@ -891,7 +821,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testBuyerWithOneMaturityLevelBeforeMax() public {
         // Create offer
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Create a new relic for the buyer
         uint256 almostMaxRelicId = _createRelic(buyer, 50 ether);
@@ -922,13 +852,13 @@ contract MaBeetsBoostUnitTest is Test {
     function testAcceptedOfferRecordCountGetters() public {
         // Create and accept multiple offers to generate records
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         vm.prank(buyer);
         maBeetsBoost.acceptOffer(sellerRelicId, buyerRelicId, MAX_MATURED_LEVEL);
 
         vm.prank(seller2);
-        maBeetsBoost.createOffer(seller2RelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(seller2RelicId);
 
         vm.prank(user2);
         maBeetsBoost.acceptOffer(seller2RelicId, user2RelicId, MAX_MATURED_LEVEL);
@@ -960,13 +890,13 @@ contract MaBeetsBoostUnitTest is Test {
     function testGetOfferCount() public {
         // Create multiple offers
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         vm.prank(seller2);
-        maBeetsBoost.createOffer(seller2RelicId, FEE_PER_LEVEL_BIPS + 10);
+        maBeetsBoost.createOffer(seller2RelicId);
 
         vm.prank(user1);
-        maBeetsBoost.createOffer(user1RelicId, FEE_PER_LEVEL_BIPS + 20);
+        maBeetsBoost.createOffer(user1RelicId);
 
         // Check the total count
         uint256 offerCount = maBeetsBoost.getOfferCount();
@@ -983,7 +913,7 @@ contract MaBeetsBoostUnitTest is Test {
     // Test edge case: accept offer when buyer and seller maturity difference is only 1 level
     function testAcceptOfferWithMinimalMaturityDifference() public {
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Create a new relic for the buyer with high but not max maturity
         uint256 highMaturityRelicId = _createRelic(buyer, 75 ether);
@@ -1038,7 +968,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testAcceptOfferOfferNotActive() public {
         // Create an offer
         vm.prank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId);
 
         // Cancel the offer to make it inactive
         vm.prank(seller);
@@ -1054,7 +984,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testAcceptOfferSellerNoLongerOwnsRelic() public {
         // Create an offer
         vm.prank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId);
 
         // Transfer the seller's relic to someone else
         vm.prank(seller);
@@ -1070,7 +1000,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testAcceptOfferSellerRelicNotApproved() public {
         // Create an offer
         vm.prank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId);
 
         // Remove approval for the seller's relic
         vm.prank(seller);
@@ -1085,7 +1015,7 @@ contract MaBeetsBoostUnitTest is Test {
 
     function testAcceptOfferSellerRelicNotFullyMatured() public {
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Reduce maturity by adding more tokens
         _distributeLpTokens(seller, 1000 ether);
@@ -1104,7 +1034,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testAcceptOfferSellerRelicTooSmall() public {
         // Create an offer
         vm.prank(seller);
-        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        uint256 offerId = maBeetsBoost.createOffer(sellerRelicId);
 
         // Make the seller's relic too small
         PositionInfo memory position = reliquary.getPositionForId(sellerRelicId);
@@ -1123,7 +1053,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testAcceptOfferBuyerDoesNotOwnRelic() public {
         // Create an offer
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Transfer the buyer's relic to someone else
         vm.prank(buyer);
@@ -1139,7 +1069,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testAcceptOfferBuyerRelicNotApproved() public {
         // Create an offer
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Remove approval for the buyer's relic
         vm.prank(buyer);
@@ -1171,7 +1101,7 @@ contract MaBeetsBoostUnitTest is Test {
     function testAcceptOfferBuyerRelicTooSmall() public {
         // Create an offer
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Create a small relic for the buyer
         uint256 smallAmount = maBeetsBoost.MIN_RELIC_SIZE() - 1;
@@ -1191,7 +1121,7 @@ contract MaBeetsBoostUnitTest is Test {
     // Test the canRelicBeBoosted function with a boostable relic
     function testCanRelicBeBoosted() public {
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Test if the buyer's relic can be boosted to max level
         bool canBoost = maBeetsBoost.canRelicBeBoosted(sellerRelicId, buyerRelicId, MAX_MATURED_LEVEL);
@@ -1204,7 +1134,7 @@ contract MaBeetsBoostUnitTest is Test {
         uint256 largeBuyerRelicId = _createRelic(buyer, 2000 ether); // Much larger than seller's relic
 
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Test if the large buyer relic can be boosted to max level
         bool canBoost = maBeetsBoost.canRelicBeBoosted(sellerRelicId, largeBuyerRelicId, MAX_MATURED_LEVEL);
@@ -1214,7 +1144,7 @@ contract MaBeetsBoostUnitTest is Test {
     // Test the canRelicBeBoosted function with different boost levels
     function testCanRelicBeBoostedPartialLevels() public {
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Get the current level of the buyer's relic
         PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
@@ -1235,7 +1165,7 @@ contract MaBeetsBoostUnitTest is Test {
     // Test the canRelicBeBoosted function with a level that's too low
     function testCanRelicBeBoostedTooLowLevel() public {
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         // Get the current level of the buyer's relic
         PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
@@ -1273,7 +1203,7 @@ contract MaBeetsBoostUnitTest is Test {
 
         // Create an offer for the small seller relic
         vm.prank(seller);
-        maBeetsBoost.createOffer(smallSellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(smallSellerRelicId);
 
         // Create a very large buyer relic
         uint256 largeBuyerRelicId = _createRelic(buyer, 1000 ether); // Much larger than seller's relic
@@ -1289,7 +1219,7 @@ contract MaBeetsBoostUnitTest is Test {
         LevelInfo memory levelInfo = reliquary.getLevelInfo(MABEETS_POOL_ID);
 
         vm.prank(seller);
-        maBeetsBoost.createOffer(sellerRelicId, FEE_PER_LEVEL_BIPS);
+        maBeetsBoost.createOffer(sellerRelicId);
 
         uint256 relicId = _createRelic(buyer, 100 ether);
 
