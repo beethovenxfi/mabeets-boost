@@ -305,7 +305,6 @@ contract MaBeetsBoost is Ownable, ReentrancyGuard, IERC721Receiver {
         internal
         returns (uint256 newBuyerRelicId, uint256 sellerFeeAmount, uint256 protocolFeeAmount)
     {
-        Offer storage offer = _offers[sellerRelicId];
         PositionInfo memory buyerPosition = reliquary.getPositionForId(buyerRelicId);
         PositionInfo memory sellerPosition = reliquary.getPositionForId(sellerRelicId);
 
