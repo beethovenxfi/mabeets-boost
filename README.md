@@ -14,10 +14,10 @@ The version of Reliquary deployed can be found [here](https://github.com/beethov
 
 There are two parties, a `seller` and a `buyer`.
 
-The `seller` creates an offer to sell their excess maturity to any `buyer` by calling the `createOffer` function. The seller defines the `feePerLevelBips`, which is the fee per level of maturity that the buyer will pay to the seller.
+The `seller` creates an offer to sell their excess maturity to any `buyer` by calling the `createOffer` function. The fee per level is defined globally by governance.
 
 ```solidity
-maBeetsBoost.createOffer(relicId, feePerLevelBips);
+maBeetsBoost.createOffer(relicId);
 ```
 
 A `buyer` can accept an offer at any time by specifying the seller's relic ID, their own relic ID, and the number of levels to boost.

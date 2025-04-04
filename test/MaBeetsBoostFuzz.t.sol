@@ -192,8 +192,9 @@ contract MaBeetsBoostFuzzTest is Test {
 
         // Verify the buyer relic is smaller
         assertTrue(buyerPositionAfter.amount < buyerPositionBefore.amount);
-        // Verify the seller relic is larger
-        assertTrue(sellerPositionAfter.amount > sellerPositionBefore.amount);
+        // Verify the seller relic is equal or larger
+        // in the instance where the protocol fee is 100%, the seller's position size will be the same
+        assertTrue(sellerPositionAfter.amount >= sellerPositionBefore.amount);
 
         // Verify the buyer relic amount is as expected
         assertEq(buyerPositionAfter.amount, expectedBuyerRelicAmount);
